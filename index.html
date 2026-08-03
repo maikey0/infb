@@ -527,10 +527,10 @@ function recalcFootOffset(mesh){
 }
 
 function attachPlayerVisual(mesh){
+  recalcFootOffset(mesh); // playerRootに追加する前に計算（追加後だと親のズレが混入してしまうバグがあった）
   if (playerVisual) playerRoot.remove(playerVisual);
   playerVisual = mesh;
   playerRoot.add(playerVisual);
-  recalcFootOffset(mesh);
 }
 
 // GitHubでホストした .glb を読み込み、成功したら自機・敵機ともにこのモデルへ差し替える
@@ -560,7 +560,7 @@ function tryLoadGlb(i){
     const model = gltf.scene;
     const box0 = new THREE.Box3().setFromObject(model);
     const size = new THREE.Vector3(); box0.getSize(size);
-    const scale = size.y>0 ? 1.9/size.y : 1;
+    const scale = size.y>0 ? 4.2/size.y : 1;
     model.scale.setScalar(scale);
     loadedGlbTemplate = model;
     attachPlayerVisual(cloneGlbVisual(false));
