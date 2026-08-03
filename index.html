@@ -12,7 +12,7 @@
   .imgFrame { position:relative; background-repeat:no-repeat; background-size:100% 100%; }
 
   /* ===== COST (top-left, single combined image) ===== */
-  #costImg { position:absolute; top:10px; left:10px; width:360px; height:112.5px; background-image:url('hud_cost_v2.png'); }
+  #costImg { position:absolute; top:10px; left:10px; width:360px; height:112.5px; background-image:url('images/hud_cost_v2.png'); }
   #costImg .num { position:absolute; background:transparent; display:flex; align-items:center; justify-content:center; font-family:'Consolas',monospace; font-weight:800; font-size:19px; color:#eef; text-shadow:0 0 6px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.9); }
   #costImg .num1 { left:2%; top:26.3%; width:21%; height:9.4%; }
   #costImg .num2 { left:2%; top:48.75%; width:21%; height:9.4%; }
@@ -49,12 +49,12 @@
   .wSlot .wLabel { position:absolute; left:4%; top:80%; width:70%; height:16%; font-size:9.5px; color:#bfe6ff; letter-spacing:0.5px; display:flex; align-items:center; }
 
   /* ===== BOOST (left image, black-mask depletion) ===== */
-  #boostBox { position:absolute; bottom:14px; left:14px; width:280px; height:58.3px; background-image:url('hud_boost.png'); background-repeat:no-repeat; background-size:100% 100%; }
+  #boostBox { position:absolute; bottom:14px; left:14px; width:280px; height:58.3px; background-image:url('images/hud_boost.png'); background-repeat:no-repeat; background-size:100% 100%; }
   #boostBox .track { position:absolute; left:13.2%; top:36.7%; width:72.9%; height:12.2%; overflow:hidden; }
   #boostBox .mask { position:absolute; top:0; right:0; height:100%; background:#050505; width:0%; transition:width 0.08s linear; }
 
   /* ===== EX BURST (new image, fill-up gauge) — BOOSTの右側に配置 ===== */
-  #exBurstBox { position:absolute; bottom:14px; left:304px; width:280px; height:111.6px; background-image:url('hud_exburst.png'); background-repeat:no-repeat; background-size:100% 100%; }
+  #exBurstBox { position:absolute; bottom:14px; left:304px; width:280px; height:111.6px; background-image:url('images/hud_exburst.png'); background-repeat:no-repeat; background-size:100% 100%; }
   #exBurstBox .track { position:absolute; left:31.8%; top:64.2%; width:54.9%; height:11.3%; overflow:hidden; }
   #exBurstBox .fill { height:100%; width:0%; background:linear-gradient(90deg,#ff8a1c,#ffe14d); transition:width 0.15s linear; }
   #exBurstBox .pct { position:absolute; left:60%; top:4%; width:38%; height:40%; background:#5a5a5c; display:flex; align-items:center; justify-content:center; font-family:'Consolas',monospace; font-weight:800; font-size:24px; color:#fff; }
@@ -110,27 +110,27 @@
   </div>
 
   <div id="weaponPanel">
-    <div class="wSlot" id="wSlot_main" style="background-image:url('wslot_0.png')">
+    <div class="wSlot" id="wSlot_main" style="background-image:url('images/wslot_0.png')">
       <div class="wNum" id="cnt_main">7</div>
       <div class="wBar"><div class="wBarFill" id="bar_main"></div></div>
       <div class="wLabel">①メイン射撃[J] 長押=照射</div>
     </div>
-    <div class="wSlot" id="wSlot_sub" style="background-image:url('wslot_1.png')">
+    <div class="wSlot" id="wSlot_sub" style="background-image:url('images/wslot_1.png')">
       <div class="wNum" id="cnt_sub">4</div>
       <div class="wBar"><div class="wBarFill" id="bar_sub"></div></div>
       <div class="wLabel">②サブ射撃[K]</div>
     </div>
-    <div class="wSlot" id="wSlot_special" style="background-image:url('wslot_2.png')">
+    <div class="wSlot" id="wSlot_special" style="background-image:url('images/wslot_2.png')">
       <div class="wNum" id="cnt_special">2</div>
       <div class="wBar"><div class="wBarFill" id="bar_special"></div></div>
-      <div class="wLabel">③特殊射撃[H]</div>
+      <div class="wLabel">③特殊射撃[H] N照射/WS捕縛/ADファング</div>
     </div>
-    <div class="wSlot" id="wSlot_smelee" style="background-image:url('wslot_3.png')">
+    <div class="wSlot" id="wSlot_smelee" style="background-image:url('images/wslot_3.png')">
       <div class="wNum" id="cnt_smelee">1</div>
       <div class="wBar"><div class="wBarFill" id="bar_smelee"></div></div>
       <div class="wLabel">④特殊格闘[I]</div>
     </div>
-    <div class="wSlot" id="wSlot_melee" style="background-image:url('wslot_4.png')">
+    <div class="wSlot" id="wSlot_melee" style="background-image:url('images/wslot_4.png')">
       <div class="wNum" id="cnt_melee">100</div>
       <div class="wBar"><div class="wBarFill" id="bar_melee"></div></div>
       <div class="wLabel">⑤格闘[U] 長押=無敵</div>
@@ -446,6 +446,15 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.25));
 // ---------------------------------------------------------------------------
 const playerRoot = new THREE.Group();
 scene.add(playerRoot);
+
+// 格闘無敵チャージ発動中に表示する水色のシールド球
+const invincibleShield = new THREE.Mesh(
+  new THREE.SphereGeometry(1.8, 20, 20),
+  new THREE.MeshBasicMaterial({ color:0x6fe0ff, transparent:true, opacity:0.28, side:THREE.DoubleSide, depthWrite:false })
+);
+invincibleShield.position.y = 1.1;
+invincibleShield.visible = false;
+playerRoot.add(invincibleShield);
 let playerVisual = null;
 let playerFootOffset = 0.9; // 実際のバウンディングボックスから再計算される
 
@@ -776,7 +785,7 @@ const state = {
 };
 
 const weapons = {
-  main:    { ammo:7, max:7, reload:0.18, timer:0 },
+  main:    { ammo:7, max:7, reload:3.0, timer:0, fireCd:0 },
   sub:     { ammo:1, max:1, reload:6.0, timer:0 },
   special: { ammo:1, max:1, reload:11.0, timer:0 },
   smelee:  { ammo:1, max:1, reload:9.0, timer:0 },
@@ -833,6 +842,7 @@ function showMsg(text,color='#ffe97a'){
 
 function handleAttackKeyDown(k){
   if (!state.controlsEnabled) return;
+  if (state.mainIrradiating && k!=='j') return; // 照射中は他の武装・移動系キーを封じる
   if (state.guarding && (k==='w'||k==='a'||k==='s'||k==='d'||k==='l'||k==='j'||k==='k'||k==='h'||k==='i'||k==='u'||k==='q')) return; // ガード中は移動と武装を封じる
   if (keys['shift']){
     if (k==='w'){ doStep('front'); return; }
@@ -875,8 +885,9 @@ function currentTargetPos(range){
 }
 
 function doMainShot(){
-  if (weapons.main.timer>0 || weapons.main.ammo<=0) return;
-  weapons.main.ammo--; weapons.main.timer = weapons.main.reload;
+  if (weapons.main.fireCd>0 || weapons.main.ammo<=0) return;
+  weapons.main.ammo--; weapons.main.fireCd = 0.18; // 連射間隔は従来通り最速
+  if (weapons.main.timer<=0) weapons.main.timer = weapons.main.reload; // 弾数回復(1発3.0秒)は独立してカウント
   const from = muzzlePoint();
   const targetPos = currentTargetPos(26);
   if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
@@ -889,7 +900,7 @@ function doMainShotIrradiate(dt, spawnVfx){
   const from = muzzlePoint();
   const targetPos = currentTargetPos(26);
   if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
-  if (spawnVfx) spawnBeam(from, targetPos, 0x8ff0ff, 0.16, 0.32);
+  if (spawnVfx) spawnBeam(from, targetPos, 0x8ff0ff, 0.16, 0.85);
   if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) damageDummy(65*dt, targetPos);
   gainAwaken(0.6);
 }
@@ -899,7 +910,7 @@ function doSubShot(){
   if (w.timer>0 || w.ammo<=0) return;
   w.ammo--; w.timer = w.reload;
   const from = muzzlePoint();
-  const shockwave = keys['shift'];
+  const shockwave = keys['w']||keys['a']||keys['s']||keys['d']; // レバー入れ(移動キー押下中)で衝撃波、Nで粒子弾射出
   const targetPos = currentTargetPos(22);
   if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   if (shockwave){
@@ -920,14 +931,45 @@ function doSpecialShot(){
   w.ammo--; w.timer = w.reload;
   ziEnd.visible = true;
   ziEnd.position.copy(state.pos).add(new THREE.Vector3(Math.sin(state.yaw+1)*2, 2, Math.cos(state.yaw+1)*2));
-  const mode = keys['w'] ? '前' : (keys['s'] ? '後' : 'N');
-  setTimeout(()=>{
-    const from = ziEnd.position.clone();
-    const targetPos = currentTargetPos(20);
-    spawnBeam(from, targetPos, 0xb489ff, 0.25, 0.08);
-    spawnParticleBurst(from, 0xb489ff, 14, 5);
-    if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20) damageDummy(mode==='前'?136:87, targetPos);
-  }, 350);
+  const lateral = keys['a']||keys['d'];
+  const straight = keys['w']||keys['s'];
+  const mode = lateral ? '横' : (straight ? '前後' : 'N');
+  // N：デッドエンドフィンガー【照射】／前後：デッドエンドフィンガー【捕縛】／横：DEファング→ショットジエンド
+  if (mode==='横'){
+    setTimeout(()=>{
+      const from = ziEnd.position.clone();
+      const targetPos = currentTargetPos(20);
+      for (let i=0;i<4;i++){
+        setTimeout(()=>{ spawnBeam(from.clone().add(new THREE.Vector3((Math.random()-0.5)*1.5,(Math.random()-0.5)*1.5,0)), targetPos, 0xc9a0ff, 0.14, 0.06); }, i*70);
+      }
+      if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20) damageDummy(58, targetPos); // DEファング
+      setTimeout(()=>{
+        const from2 = ziEnd.position.clone();
+        spawnBeam(from2, targetPos, 0xb489ff, 0.25, 0.14);
+        spawnParticleBurst(targetPos, 0xb489ff, 16, 5);
+        if (dummy.alive && !dummy.downed && from2.distanceTo(dummy.group.position)<20) damageDummy(98, targetPos); // ショットジエンド
+      }, 420);
+    }, 300);
+  } else if (mode==='前後'){
+    setTimeout(()=>{
+      const from = ziEnd.position.clone();
+      const targetPos = currentTargetPos(20);
+      spawnShockwaveRing(dummy.group.position.clone(), 0xb489ff, 3);
+      spawnParticleBurst(targetPos, 0xb489ff, 20, 3);
+      if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20){
+        damageDummy(70, targetPos); // デッドエンドフィンガー【捕縛】
+        if (dummy.alive){ dummy.downed = true; dummy.downTimer = 1.6; dummy.group.rotation.x = -Math.PI/2; } // 一定時間拘束
+      }
+    }, 350);
+  } else {
+    setTimeout(()=>{
+      const from = ziEnd.position.clone();
+      const targetPos = currentTargetPos(20);
+      spawnBeam(from, targetPos, 0xb489ff, 0.25, 0.08);
+      spawnParticleBurst(from, 0xb489ff, 14, 5);
+      if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20) damageDummy(90, targetPos); // デッドエンドフィンガー【照射】
+    }, 350);
+  }
   setTimeout(()=>{ ziEnd.visible = false; }, 900);
   gainAwaken(6);
 }
@@ -959,14 +1001,15 @@ function doSpecialMelee(){
   state.attackLock = 0.5;
   animatePunch(0.4, -2.0);
   setTimeout(()=>{
-    spawnShockwaveRing(state.pos.clone(), 0xfff0a0, 5.5);
-    for (let i=0;i<3;i++){
+    spawnShockwaveRing(state.pos.clone(), 0xfff0a0, 8);
+    for (let i=0;i<6;i++){
       setTimeout(()=>{
-        const p = state.pos.clone().add(new THREE.Vector3((Math.random()-0.5)*6,0,(Math.random()-0.5)*6));
-        spawnBeam(p.clone().add(new THREE.Vector3(0,8,0)), p, 0xfff0a0, 0.12, 0.08);
-      }, i*90);
+        const p = state.pos.clone().add(new THREE.Vector3((Math.random()-0.5)*14,0,(Math.random()-0.5)*14));
+        const strikeEnd = p.clone(); strikeEnd.y = state.pos.y + 0.4; // 地面までは落とさず自機のやや下で止める
+        spawnBeam(p.clone().add(new THREE.Vector3(0,8,0)), strikeEnd, 0xfff0a0, 0.12, 0.08);
+      }, i*70);
     }
-    if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<6) damageDummy(124, dummy.group.position.clone());
+    if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<12) damageDummy(124, dummy.group.position.clone());
   }, 260);
   gainAwaken(8);
 }
@@ -1184,7 +1227,7 @@ function updateMovement(dt){
   if (keys['d']) mx -= 1;
   const moving = mx!==0 || mz!==0;
 
-  const canAct = state.landingStun<=0;
+  const canAct = state.landingStun<=0 && !state.mainIrradiating; // 照射中は移動・ダッシュ等も封じる
 
   // ガード中かどうかを先に確定させる（移動・攻撃の可否判定に使う）
   const guardingNow = !!keys['f'] && canAct && state.boost>0;
@@ -1228,9 +1271,9 @@ function updateMovement(dt){
 
   // ジャンプ / 上昇：Boost を消費。離すと高速落下
   const wasGrounded = state.pos.y<=0.001;
-  if (keys[' '] && state.boost>0 && canAct){
+  if (keys[' '] && state.boost>0 && canAct && !guardingNow){
     state.pos.y = Math.min(30, state.pos.y + 9*dt);
-    state.boost = Math.max(0, state.boost - dt*22);
+    state.boost = Math.max(0, state.boost - dt*17);
     state.ascending = true;
     state.wasAirborne = true;
     if (state.boost<=0) state.overheated = true;
@@ -1313,6 +1356,13 @@ function updateMovement(dt){
     }
   }
 
+  invincibleShield.visible = state.meleeInvincible;
+  if (state.meleeInvincible){
+    const pulse = 1 + Math.sin(performance.now()*0.02)*0.06;
+    invincibleShield.scale.setScalar(pulse);
+    invincibleShield.rotation.y += dt*1.5;
+  }
+
   document.getElementById('guardFlash').style.opacity = state.guarding ? '1' : '0';
 
   // カメラ：機体がやや下寄りに収まるよう距離と高さを調整（参照画像の赤枠位置）
@@ -1374,7 +1424,7 @@ function updateWeaponUI(){
   if (state.mainIrradiating){ mainBar.style.width = ((state.mainIrradiateTime/IRRADIATE_DURATION)*100)+'%'; }
   else { mainBar.style.width = ((state.mainCharge/CHARGE_TIME)*100)+'%'; }
   document.getElementById('cnt_main').textContent = weapons.main.ammo;
-  document.getElementById('wSlot_main').classList.toggle('ready', weapons.main.timer<=0 && weapons.main.ammo>0);
+  document.getElementById('wSlot_main').classList.toggle('ready', weapons.main.fireCd<=0 && weapons.main.ammo>0);
 
   // 格闘：数値は100を基準に、無敵発動中は4秒かけて100→0までカウントダウン
   const meleeBar = document.getElementById('bar_melee');
@@ -1422,7 +1472,7 @@ function animate(){
   updateMovement(dt);
   updateVfx(dt);
 
-  Object.values(weapons).forEach(w=>{ if (w.timer>0) w.timer = Math.max(0,w.timer-dt); });
+  Object.values(weapons).forEach(w=>{ if (w.timer>0) w.timer = Math.max(0,w.timer-dt); if (w.fireCd>0) w.fireCd = Math.max(0,w.fireCd-dt); });
   Object.values(weapons).forEach(w=>{ if (w.ammo!==Infinity && w.ammo<w.max && w.timer<=0){ w.ammo++; if (w.ammo<w.max) w.timer = w.reload; } });
 
   if (state.attackLock>0) state.attackLock = Math.max(0,state.attackLock-dt);
