@@ -1091,7 +1091,7 @@ function stepDir(name){
 }
 function doDashBurst(){
   if (state.boost<10) return;
-  const dir = new THREE.Vector3(Math.sin(state.camYaw),0,Math.cos(state.camYaw));
+  const dir = new THREE.Vector3(Math.sin(state.yaw),0,Math.cos(state.yaw));
   spawnBlinkTrail(state.pos);
   state.pos.addScaledVector(dir, 5.5); // 最初の一瞬だけ瞬間移動的にビュンと進む
   spawnBlinkTrail(state.pos);
@@ -1168,8 +1168,8 @@ function updateMovement(dt){
     state.pos.addScaledVector(moveWorldDir, speed*dt);
     state.walkPhase += dt*8;
   } else if (dashing && canAct){
-    // その場でも照準方向へブーストダッシュ
-    const dir = new THREE.Vector3(Math.sin(state.camYaw),0,Math.cos(state.camYaw));
+    // その場でも機体が向いている方向へブーストダッシュ（前向きダッシュ）
+    const dir = new THREE.Vector3(Math.sin(state.yaw),0,Math.cos(state.yaw));
     state.pos.addScaledVector(dir, speedBase*2.1*dt);
   }
 
@@ -1202,6 +1202,9 @@ function updateMovement(dt){
     state.ascending = true;
     state.wasAirborne = true;
     if (state.boost<=0) state.overheated = true;
+  } else if (dashing){
+    // ダッシュ中は空中でも高度を維持し、落下しない
+    state.ascending = false;
   } else {
     state.pos.y = Math.max(0, state.pos.y - 24*dt); // 高速落下
     state.ascending = false;
