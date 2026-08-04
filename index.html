@@ -176,8 +176,12 @@ const MAX_BOOST = 100;
 const CHARGE_TIME = 2.0;      // 長押しチャージに必要な秒数
 const IRRADIATE_DURATION = 3.0; // 照射の持続時間
 const INVINCIBLE_DURATION = 4.0; // 無敵の持続時間
-const LOCK_RED_RANGE = 16;    // これより近いと誘導ON(赤)
-const LOCK_GREEN_RANGE = 34;  // これより遠いと誘導OFF(緑) ※赤〜緑の間も緑扱い
+const LOCK_RED_RANGE = 48;    // これより近いと誘導ON(赤)　※以前の3倍に拡大
+const LOCK_GREEN_RANGE = 90;  // これより遠いと誘導OFF(緑) ※赤〜緑の間も緑扱い
+const PROJECTILE_SPEED_MAIN = 30;   // メイン射撃の弾速（秒速）
+const PROJECTILE_SPEED_SUB = 26;    // サブ射撃の弾速
+const PROJECTILE_SPEED_ENEMY = 22;  // 敵の射撃弾速（プレイヤーが避けやすいよう低速に）
+const DOWN_VALUE_THRESHOLD = 5;     // これを超えるとよろけダウン(黄ロック)
 // ステージ境界は下記の STAGE_BOUNDARY(多角形)で定義
 
 // ---------------------------------------------------------------------------
@@ -572,7 +576,7 @@ function tryLoadGlb(i){
     const scale = size.y>0 ? 4.2/size.y : 1;
     model.scale.setScalar(scale);
     loadedGlbTemplate = model;
-    attachPlayerVisual(cloneGlbVisual(false));
+    attachPlayerVisual(cloneGlbVisual());
     refreshEnemyVisuals();
     debugLog('外部モデル読込成功: '+path);
   }, undefined, (err)=>{
@@ -585,17 +589,8 @@ function tryLoadGlb(i){
 tryLoadGlb(0);
 
 // glbモデルの複製を作成し、必ず地面(y=0)に立つよう自分でバウンディングボックスを計算してオフセットする
-function cloneGlbVisual(tintRed){
+function cloneGlbVisual(){
   const model = loadedGlbTemplate.clone(true);
-  if (tintRed){
-    model.traverse(obj=>{
-      if (obj.isMesh && obj.material){
-        obj.material = obj.material.clone();
-        if (obj.material.color) obj.material.color.lerp(new THREE.Color(0xff2a20), 0.55);
-        if (obj.material.emissive) obj.material.emissive.lerp(new THREE.Color(0xff2a20), 0.4);
-      }
-    });
-  }
   const box = new THREE.Box3().setFromObject(model);
   model.position.y -= box.min.y; // 足が必ず地面(y=0)に接するようオフセット
   return model;
@@ -604,7 +599,7 @@ function refreshEnemyVisuals(){
   if (!loadedGlbTemplate) return;
   enemies.forEach(e=>{
     e.group.remove(e.visual);
-    e.visual = cloneGlbVisual(true);
+    e.visual = cloneGlbVisual();
     e.group.add(e.visual);
   });
 }
@@ -640,18 +635,8 @@ function buildDummy(){
   return g;
 }
 function buildEnemyMech(){
-  // 敵機も試験的にトランジェントガンダム同型モデルを使用（自機とは別マテリアルなので赤系に着色）
+  // 敵機も自機と同型モデルを使用。色は赤に染めず、通常（自機と同じ）配色のまま使う
   const mech = buildProceduralPlayer();
-  mech.traverse(obj=>{
-    if (obj.isMesh && obj.material && obj.material.color){
-      const hex = obj.material.color.getHex();
-      if (hex===0xe9edf2) obj.material.color.setHex(0xcf5a52);
-      if (obj.material.emissive && obj.material.emissive.getHex()===0x39d6ff){
-        obj.material.emissive.setHex(0xff3322);
-        obj.material.color.setHex(0xff6a52);
-      }
-    }
-  });
   const box = new THREE.Box3().setFromObject(mech);
   mech.position.y = -box.min.y;
   return mech;
@@ -663,7 +648,8 @@ function makeEnemy(x,z){
   wrapper.position.set(x,0,z);
   wrapper.rotation.y = Math.PI; // プレイヤー側を向かせておく
   scene.add(wrapper);
-  return { group:wrapper, visual, hp:MAX_HP, maxHp:MAX_HP, alive:true, downed:false, downTimer:0, respawnTimer:0, attackTimer:2.0+Math.random()*1.5 };
+  return { group:wrapper, visual, hp:MAX_HP, maxHp:MAX_HP, alive:true, downed:false, downTimer:0, respawnTimer:0, attackTimer:2.0+Math.random()*1.5,
+    downValue:0, moveCooldown:1.0+Math.random()*1.5, jumpVel:0, dodgeCd:0 };
 }
 const enemies = [ makeEnemy(8,-6), makeEnemy(-10,-16) ];
 let dummy = enemies[0]; // 常にロック中の敵を指す（毎フレーム更新される）
@@ -672,6 +658,7 @@ let dummy = enemies[0]; // 常にロック中の敵を指す（毎フレーム�
 // 4. VFX HELPERS
 // ---------------------------------------------------------------------------
 const vfxList = [];
+const projectiles = []; // 弾速を持つ実弾（プレイヤー/敵 共通）
 function spawnBeam(from,to,color=0x4fe0ff,life=0.15,thickness=0.06){
   const dir = new THREE.Vector3().subVectors(to,from);
   const len = Math.max(0.05, dir.length());
@@ -736,6 +723,45 @@ function updateVfx(dt){
     } else if (v.type==='octaflash'){
       v.mesh.material.opacity = 0.95*(1-t);
       v.mesh.quaternion.copy(camera.quaternion);
+    }
+  }
+}
+
+function spawnProjectile(from, dir, speed, damage, downValue, owner, color=0x4fe0ff, target=null){
+  // 弾速を持つ実弾。ownerが'player'なら敵(target)に、'enemy'ならプレイヤーに当たり判定する
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.24,8,8), new THREE.MeshBasicMaterial({ color }));
+  mesh.position.copy(from);
+  scene.add(mesh);
+  const light = new THREE.PointLight(color, 1.4, 4); mesh.add(light);
+  projectiles.push({ mesh, pos:from.clone(), dir:dir.clone().normalize(), speed, damage, downValue, owner, target, hitRadius:1.5, life:3.0, age:0 });
+}
+function updateProjectiles(dt){
+  for (let i=projectiles.length-1;i>=0;i--){
+    const p = projectiles[i];
+    p.age += dt;
+    p.pos.addScaledVector(p.dir, p.speed*dt);
+    p.mesh.position.copy(p.pos);
+    let hit = false;
+    if (p.owner==='player'){
+      const tgt = p.target;
+      if (tgt && tgt.alive && !tgt.downed){
+        const tp = tgt.group.position.clone().add(new THREE.Vector3(0,1,0));
+        if (p.pos.distanceTo(tp) < p.hitRadius){
+          damageEnemy(tgt, p.damage, tp, p.downValue);
+          hit = true;
+        }
+      }
+    } else {
+      const pp = state.pos.clone().add(new THREE.Vector3(0,1.1,0));
+      if (p.pos.distanceTo(pp) < p.hitRadius){
+        damagePlayer(p.damage, p.pos);
+        spawnParticleBurst(pp, 0xff5a3c, 6, 4);
+        hit = true;
+      }
+    }
+    if (hit || p.age>p.life){
+      scene.remove(p.mesh);
+      projectiles.splice(i,1);
     }
   }
 }
@@ -895,9 +921,11 @@ function doMainShot(){
   const from = muzzlePoint();
   const targetPos = currentTargetPos(26);
   if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
-  spawnBeam(from, targetPos, 0x4fe0ff, 0.18, 0.07);
+  spawnParticleBurst(from, 0x4fe0ff, 4, 3); // マズルフラッシュ
+  const dir = new THREE.Vector3().subVectors(targetPos, from);
+  const tgt = (lockOnHoming() && dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) ? dummy : null;
+  spawnProjectile(from, dir, PROJECTILE_SPEED_MAIN, 37, 1, 'player', 0x4fe0ff, tgt); // ダウン値1
   gainAwaken(2);
-  if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) damageDummy(37, targetPos);
 }
 function doMainShotIrradiate(dt, spawnVfx){
   // J長押し(2秒チャージ後)：GNパルチザン【照射】持続ビーム。太く、描画は間引いて負荷軽減
@@ -905,7 +933,7 @@ function doMainShotIrradiate(dt, spawnVfx){
   const targetPos = currentTargetPos(26);
   if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   if (spawnVfx) spawnBeam(from, targetPos, 0x8ff0ff, 0.16, 0.85);
-  if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) damageDummy(65*dt, targetPos);
+  if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) damageDummy(65*dt, targetPos, 0.5*dt);
   gainAwaken(0.6);
 }
 
@@ -920,12 +948,13 @@ function doSubShot(){
   if (shockwave){
     spawnShockwaveRing(state.pos.clone().add(new THREE.Vector3(0,0.1,0)), 0x8fd6ff, 6);
     gainAwaken(4);
-    if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<7) damageDummy(87, targetPos);
+    if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<7) damageDummy(87, targetPos, 2); // ダウン値2
   } else {
     spawnParticleBurst(from, 0x8fd6ff, 10, 6);
-    spawnBeam(from, targetPos, 0x8fd6ff, 0.2, 0.09);
+    const dir = new THREE.Vector3().subVectors(targetPos, from);
+    const tgt = (lockOnHoming() && dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<24) ? dummy : null;
+    spawnProjectile(from, dir, PROJECTILE_SPEED_SUB, 74, 2, 'player', 0x8fd6ff, tgt); // ダウン値2
     gainAwaken(4);
-    if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<24) damageDummy(74, targetPos);
   }
 }
 
@@ -946,12 +975,12 @@ function doSpecialShot(){
       for (let i=0;i<4;i++){
         setTimeout(()=>{ spawnBeam(from.clone().add(new THREE.Vector3((Math.random()-0.5)*1.5,(Math.random()-0.5)*1.5,0)), targetPos, 0xc9a0ff, 0.14, 0.06); }, i*70);
       }
-      if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20) damageDummy(58, targetPos); // DEファング
+      if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20) damageDummy(58, targetPos, 1.5); // DEファング
       setTimeout(()=>{
         const from2 = ziEnd.position.clone();
         spawnBeam(from2, targetPos, 0xb489ff, 0.25, 0.14);
         spawnParticleBurst(targetPos, 0xb489ff, 16, 5);
-        if (dummy.alive && !dummy.downed && from2.distanceTo(dummy.group.position)<20) damageDummy(98, targetPos); // ショットジエンド
+        if (dummy.alive && !dummy.downed && from2.distanceTo(dummy.group.position)<20) damageDummy(98, targetPos, 1.5); // ショットジエンド
       }, 420);
     }, 300);
   } else if (mode==='前後'){
@@ -971,7 +1000,7 @@ function doSpecialShot(){
       const targetPos = currentTargetPos(20);
       spawnBeam(from, targetPos, 0xb489ff, 0.25, 0.08);
       spawnParticleBurst(from, 0xb489ff, 14, 5);
-      if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20) damageDummy(90, targetPos); // デッドエンドフィンガー【照射】
+      if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20) damageDummy(90, targetPos, 2); // デッドエンドフィンガー【照射】
     }, 350);
   }
   setTimeout(()=>{ ziEnd.visible = false; }, 900);
@@ -991,7 +1020,7 @@ function doIkkaku(){
   spawnParticleBurst(from, 0x8fe8ff, 26, 7);
   spawnBeam(from, targetPos, 0xdff7ff, 0.4, 0.7);
   if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<30){
-    damageDummy(260, targetPos);
+    damageDummy(260, targetPos, 6); // 覚醒中の切り札技のため単発で必ずダウンさせる
     spawnShockwaveRing(dummy.group.position.clone(), 0x8fe8ff, 7);
   }
 }
@@ -1009,7 +1038,7 @@ function doMelee(){
   if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<4){
     const baseDmg = [99,112,161][state.comboStep-1];
     const dmg = state.bursting ? Math.round(baseDmg*1.08) : baseDmg; // 覚醒中は格闘ダメージ+8%
-    damageDummy(dmg, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)));
+    damageDummy(dmg, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 1.5); // ダウン値1.5(3段コンボで4.5)
     spawnParticleBurst(dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 0xffe97a, 14, 5);
   }
   gainAwaken(5);
@@ -1031,7 +1060,7 @@ function doSpecialMelee(){
         spawnBeam(p.clone().add(new THREE.Vector3(0,8,0)), strikeEnd, 0xfff0a0, 0.12, 0.08);
       }, i*70);
     }
-    if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<12) damageDummy(124, dummy.group.position.clone());
+    if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<12) damageDummy(124, dummy.group.position.clone(), 3);
   }, 260);
   gainAwaken(8);
 }
@@ -1065,7 +1094,7 @@ function doBurstLancer(){
   }
   setTimeout(()=>{
     if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<14){
-      damageDummy(249, dummy.group.position.clone().add(new THREE.Vector3(0,1,0))); // 覚醒中の格闘ダメージ上昇込みの威力
+      damageDummy(249, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 6); // 覚醒中の格闘ダメージ上昇込みの威力／切り札技のため単発必ずダウン
       spawnShockwaveRing(dummy.group.position.clone(), 0xff5a3c, 8);
     }
   }, 420);
@@ -1102,18 +1131,27 @@ function doGPortentCall(){
 
 function gainAwaken(v){ if (!state.bursting) state.awaken = Math.min(200, state.awaken+v); }
 
-function damageDummy(dmg,hitPos){
-  if (!dummy.alive || dummy.downed) return;
-  dummy.hp = Math.max(0, dummy.hp-dmg);
-  document.getElementById('dummyHpFill').style.width = (dummy.hp/dummy.maxHp*100)+'%';
-  spawnParticleBurst(hitPos || dummy.group.position.clone(), 0xffcf5a, 8, 4);
-  if (dummy.hp<=0){
-    // ダウン：一定ダメージで転倒し、攻撃不可(黄ロック)になったのち起き上がる
-    dummy.downed = true; dummy.downTimer = 3.5;
-    dummy.group.rotation.x = -Math.PI/2;
-    state.costEnemy = Math.max(0, state.costEnemy-2000);
+function damageEnemy(e, dmg, hitPos, downValue=0){
+  if (!e.alive || e.downed) return;
+  e.hp = Math.max(0, e.hp-dmg);
+  e.downValue = (e.downValue||0) + downValue;
+  if (e===dummy) document.getElementById('dummyHpFill').style.width = (e.hp/e.maxHp*100)+'%';
+  spawnParticleBurst(hitPos || e.group.position.clone(), 0xffcf5a, 8, 4);
+  if (e.hp<=0){
+    // ダウン：撃墜。一定時間転倒し、攻撃不可(黄ロック)になったのち起き上がる
+    e.downed = true; e.downTimer = 3.5; e.downValue = 0;
+    e.group.rotation.x = -Math.PI/2;
+    if (e===dummy) state.costEnemy = Math.max(0, state.costEnemy-2000);
     showMsg('DOWN!', '#ffe14d');
+  } else if (e.downValue > DOWN_VALUE_THRESHOLD){
+    // ダウン値の蓄積によるよろけダウン(黄ロック)。撃墜ではないためコストは減らない
+    e.downed = true; e.downTimer = 2.2; e.downValue = 0;
+    e.group.rotation.x = -Math.PI/2;
+    showMsg('よろけダウン！', '#ffe14d');
   }
+}
+function damageDummy(dmg, hitPos, downValue=0){
+  damageEnemy(dummy, dmg, hitPos, downValue);
 }
 
 function cycleTarget(){
@@ -1161,21 +1199,106 @@ function damagePlayer(dmg, fromPos){
   }
 }
 
-// 敵(訓練用ダミー機)の定期攻撃AI：一定間隔でプレイヤーへビームを撃つ
+// 敵(訓練用ダミー機)のAI：弾速のある実弾で複数の武装を使い分け、ダッシュ・ジャンプ・回避行動も行う
 function updateEnemyAI(dt){
   if (!state.controlsEnabled) return;
   enemies.forEach(e=>{
-    if (!e.alive || e.downed) return;
+    if (!e.alive) return;
+    if (e.downed){
+      e.jumpVel = 0;
+      return;
+    }
+
+    // ---- 攻撃：複数の武装をランダムに使い分ける ----
     e.attackTimer -= dt;
     if (e.attackTimer<=0){
-      e.attackTimer = 2.6 + Math.random()*1.2;
+      e.attackTimer = 2.2 + Math.random()*1.6;
       const from = e.group.position.clone().add(new THREE.Vector3(0,1.3,0));
       const to = state.pos.clone().add(new THREE.Vector3(0,1.1,0));
-      if (from.distanceTo(to) < 40){
-        spawnBeam(from, to, 0xff5a3c, 0.22, 0.14);
-        setTimeout(()=>{ damagePlayer(28, from); }, 120);
+      const dist = from.distanceTo(to);
+      if (dist < 55){
+        const dir = new THREE.Vector3().subVectors(to, from);
+        const roll = Math.random();
+        if (roll<0.5){
+          // メイン射撃相当：素早い単発
+          spawnProjectile(from, dir, PROJECTILE_SPEED_ENEMY*1.15, 28, 1, 'enemy', 0xff5a3c);
+        } else if (roll<0.8){
+          // サブ射撃相当：やや低速・高威力
+          spawnProjectile(from, dir, PROJECTILE_SPEED_ENEMY*0.75, 46, 2, 'enemy', 0xffa85a);
+        } else {
+          // 特殊射撃相当：3連射
+          for (let i=0;i<3;i++){
+            setTimeout(()=>{
+              if (!e.alive || e.downed) return;
+              const f2 = e.group.position.clone().add(new THREE.Vector3(0,1.3,0));
+              const t2 = state.pos.clone().add(new THREE.Vector3(0,1.1,0));
+              const d2 = new THREE.Vector3().subVectors(t2,f2);
+              spawnProjectile(f2, d2, PROJECTILE_SPEED_ENEMY*1.1, 15, 0.6, 'enemy', 0xc9a0ff);
+            }, i*180);
+          }
+        }
       }
     }
+
+    // ---- 被弾回避：プレイヤーの弾が接近してきたら横にダッシュして避ける ----
+    e.dodgeCd = Math.max(0, (e.dodgeCd||0) - dt);
+    if (e.dodgeCd<=0){
+      for (const p of projectiles){
+        if (p.owner!=='player') continue;
+        const toE = new THREE.Vector3().subVectors(e.group.position, p.pos);
+        const dist = toE.length();
+        if (dist<12 && dist>0.01){
+          const closing = p.dir.dot(toE.clone().normalize());
+          if (closing>0.7){
+            const yaw = e.group.rotation.y;
+            const lateral = new THREE.Vector3(Math.sin(yaw+Math.PI/2),0,Math.cos(yaw+Math.PI/2));
+            const sign = Math.random()<0.5 ? 1 : -1;
+            const next = e.group.position.clone().addScaledVector(lateral, sign*5);
+            e.group.position.copy(clampToStage(next));
+            spawnBlinkTrail(e.group.position.clone());
+            e.dodgeCd = 1.1;
+            e.moveCooldown = Math.max(e.moveCooldown||0, 1.2);
+            break;
+          }
+        }
+      }
+    }
+
+    // ---- 移動AI：一定間隔でダッシュ／ジャンプ／小刻みな位置調整を行う ----
+    e.moveCooldown = (e.moveCooldown||0) - dt;
+    if (e.moveCooldown<=0){
+      e.moveCooldown = 1.3 + Math.random()*1.7;
+      const yaw = e.group.rotation.y;
+      const action = Math.random();
+      if (action<0.4){
+        // ダッシュ回避行動（横方向）
+        const lateral = new THREE.Vector3(Math.sin(yaw+Math.PI/2),0,Math.cos(yaw+Math.PI/2));
+        const sign = Math.random()<0.5 ? 1 : -1;
+        const next = e.group.position.clone().addScaledVector(lateral, sign*4.5);
+        e.group.position.copy(clampToStage(next));
+        spawnBlinkTrail(e.group.position.clone());
+      } else if (action<0.65 && e.jumpVel===0 && e.group.position.y<=0.001){
+        // ジャンプ
+        e.jumpVel = 6.5;
+      } else {
+        // 前後への軽いステップ（距離調整）
+        const fwd = new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw));
+        const sign = Math.random()<0.5 ? 1 : -1;
+        const next = e.group.position.clone().addScaledVector(fwd, sign*2.6);
+        e.group.position.copy(clampToStage(next));
+      }
+    }
+
+    // ---- ジャンプの簡易物理 ----
+    if (e.jumpVel!==0 || e.group.position.y>0){
+      e.group.position.y += e.jumpVel*dt;
+      e.jumpVel -= 14*dt;
+      if (e.group.position.y<=0){ e.group.position.y = 0; e.jumpVel = 0; }
+    }
+
+    // ---- 常にプレイヤーの方を向く ----
+    const toPlayer = new THREE.Vector3().subVectors(state.pos, e.group.position);
+    e.group.rotation.y = Math.atan2(toPlayer.x, toPlayer.z) + Math.PI;
   });
 }
 
@@ -1509,12 +1632,11 @@ function animate(){
     if (e.downed){
       e.downTimer -= dt;
       if (e.downTimer<=0){
-        e.downed = false; e.hp = e.maxHp; e.group.rotation.x = 0;
+        e.downed = false; e.hp = e.maxHp; e.downValue = 0; e.group.rotation.x = 0;
       }
-    } else {
-      e.group.rotation.y += dt*0.4;
     }
   });
+  updateProjectiles(dt);
   document.getElementById('dummyHpFill').style.width = (dummy.hp/dummy.maxHp*100)+'%';
 
   updateTimerUI(dt);
