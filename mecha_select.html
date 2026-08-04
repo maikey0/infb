@@ -536,13 +536,17 @@ mech.add(backpack);
 mech.scale.set(1.9,1.9,1.9);
 mech.position.set(0.4,0.15,0);
 
-// 外部.glbモデルを読み込めた場合はこちらに差し替える（battle_field.htmlと同じモデルを使用）
+// 外部.glbモデルを読み込めた場合はこちらに差し替える（機体ごとにモデルを切替）
 let activeMech = mech;
-let mechBaseY = 0.15;
-const glbCandidates = ['frostwing_gundam.glb', './frostwing_gundam.glb', 'assets/frostwing_gundam.glb'];
-function tryLoadGlb(i){
-  if (i>=glbCandidates.length) return; // 読込失敗時は手続き生成モデルのまま
-  const path = glbCandidates[i];
+let mechBaseY = 0.7; // 表示位置を上寄りに調整
+const UNIT_GLB_PATHS = {
+  transient: ['frostwing_gundam.glb', './frostwing_gundam.glb', 'assets/frostwing_gundam.glb'],
+  x1fc: ['x1_fullcross.glb', './x1_fullcross.glb', 'assets/x1_fullcross.glb'],
+};
+const glbModelCache = {};
+let currentGlbMesh = null;
+
+function makeConfiguredLoader(){
   const loader = new GLTFLoader();
   const dracoLoader = new DRACOLoader();
   dracoLoader.setDecoderPath('https://unpkg.com/three@0.160.0/examples/jsm/libs/draco/');
@@ -552,7 +556,24 @@ function tryLoadGlb(i){
   ktx2Loader.detectSupport(renderer);
   loader.setKTX2Loader(ktx2Loader);
   loader.setMeshoptDecoder(MeshoptDecoder);
-  loader.load(path, (gltf)=>{
+  return loader;
+}
+function showProceduralFallback(){
+  mech.visible = true;
+  if (currentGlbMesh) currentGlbMesh.visible = false;
+  activeMech = mech; mechBaseY = 0.7; currentGlbMesh = null;
+}
+function showGlbMesh(model){
+  mech.visible = false;
+  if (currentGlbMesh && currentGlbMesh!==model) currentGlbMesh.visible = false;
+  model.visible = true;
+  activeMech = model; mechBaseY = -0.3; currentGlbMesh = model;
+}
+function tryLoadUnitGlb(unitId, i){
+  const candidates = UNIT_GLB_PATHS[unitId];
+  if (!candidates || i>=candidates.length){ showProceduralFallback(); return; }
+  const loader = makeConfiguredLoader();
+  loader.load(candidates[i], (gltf)=>{
     const model = gltf.scene;
     const box0 = new THREE.Box3().setFromObject(model);
     const size = new THREE.Vector3(); box0.getSize(size);
@@ -562,12 +583,17 @@ function tryLoadGlb(i){
     model.position.y -= box1.min.y; // 足が必ず地面付近に来るようオフセット
     model.position.x = 0.4;
     scene.add(model);
-    mech.visible = false;
-    activeMech = model;
-    mechBaseY = -0.9;
-  }, undefined, ()=>{ tryLoadGlb(i+1); });
+    model.visible = false;
+    glbModelCache[unitId] = model;
+    showGlbMesh(model);
+  }, undefined, ()=>{ tryLoadUnitGlb(unitId, i+1); });
 }
-tryLoadGlb(0);
+function loadAndShowUnitModel(unitId){
+  if (glbModelCache[unitId]){ showGlbMesh(glbModelCache[unitId]); return; }
+  if (!UNIT_GLB_PATHS[unitId]){ showProceduralFallback(); return; }
+  tryLoadUnitGlb(unitId, 0);
+}
+loadAndShowUnitModel('transient');
 
 // ---------------------------------------------------------------------
 // 3. ANIMATION LOOP
@@ -645,10 +671,11 @@ function renderGrid(){
 }
 
 function selectUnit(i){
-  if (UNITS[i].locked) return; // 今回はトランジェントガンダムのみ選択可能
+  if (UNITS[i].locked) return;
   selectedIndex = i;
   renderGrid();
   updateInfoPanel();
+  loadAndShowUnitModel(UNITS[i].id);
 }
 
 function updateInfoPanel(){

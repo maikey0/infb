@@ -38,6 +38,10 @@
   #hpText { position:absolute; bottom:150px; left:14px; }
   #hpText .label { font-size:10px; letter-spacing:2px; color:#9fd8ff; }
   #hpText .val { font-family:'Consolas',monospace; font-size:40px; font-weight:800; color:#fff; line-height:1; text-shadow:0 0 10px rgba(80,180,255,0.7); }
+  #cloakBox { position:absolute; bottom:150px; left:150px; width:230px; height:70.4px; background-image:url('images/x1_cloak120.png'); background-repeat:no-repeat; background-size:100% 100%; display:none; }
+  #cloakBox .num { position:absolute; left:11%; top:20%; width:34%; height:45%; background:#062b34; display:flex; align-items:center; justify-content:center; font-family:'Consolas',monospace; font-weight:800; font-size:22px; color:#a0f0ff; }
+  #cloakBox .track { position:absolute; left:23.3%; top:75.2%; width:27.1%; height:2.8%; overflow:hidden; }
+  #cloakBox .mask { position:absolute; top:0; right:0; height:100%; background:#041418; width:0%; transition:width 0.2s; }
 
   /* ===== WEAPON PANEL ===== */
   #weaponPanel { position:absolute; bottom:14px; right:14px; width:300px; display:flex; flex-direction:column; gap:4px; }
@@ -95,6 +99,7 @@
   <div id="dummyHpBox"><div class="name">ロック中の敵</div><div class="track"><div class="fill" id="dummyHpFill"></div></div></div>
 
   <div id="hpText"><div class="label">ARMOR</div><div class="val" id="hpVal">620</div></div>
+  <div id="cloakBox"><div class="num" id="cloakNum">120</div><div class="track"><div class="mask" id="cloakMask"></div></div></div>
 
   <div id="controls">
     <b>移動</b> WASD　<b>視点</b> ロック中は自動追尾<br>
@@ -910,6 +915,10 @@ const weapons = IS_X1FC ? {
 if (IS_X1FC){
   document.getElementById('wSlot_csshot').style.display = '';
   document.getElementById('wSlot_csmelee').style.display = '';
+  document.getElementById('wSlot_main').style.backgroundImage = "url('images/x1_main5.png')";
+  document.getElementById('wSlot_csmelee').style.backgroundImage = "url('images/x1_meleecs.png')";
+  document.getElementById('wSlot_csshot').style.backgroundImage = "url('images/x1_shootcs.png')";
+  document.getElementById('cloakBox').style.display = '';
   document.getElementById('controls').innerHTML = `
     <b>移動</b> WASD　<b>視点</b> ロック中は自動追尾<br>
     <b>ジャンプ/上昇</b> Space (Boost消費)<br>
@@ -1888,6 +1897,11 @@ function updateWeaponUIX1FC(){
   document.getElementById('bar_main').style.width = ((weapons.main.ammo/weapons.main.max)*100)+'%';
   document.getElementById('cnt_main').textContent = weapons.main.ammo;
   document.getElementById('wSlot_main').classList.toggle('ready', weapons.main.fireCd<=0 && weapons.main.ammo>0);
+
+  // フルクロス：耐久120ぶんのビーム無効化ゲージ
+  const cloakPct = Math.max(0, state.fullCrossHP) / 120;
+  document.getElementById('cloakMask').style.width = ((1-cloakPct)*100)+'%';
+  document.getElementById('cloakNum').textContent = Math.max(0, Math.round(state.fullCrossHP));
 
   const map = [['sub','bar_sub','cnt_sub'],['special','bar_special','cnt_special'],['smelee','bar_smelee','cnt_smelee'],['csShot','bar_csshot','cnt_csshot'],['csMelee','bar_csmelee','cnt_csmelee']];
   map.forEach(([key,barId,cntId])=>{
