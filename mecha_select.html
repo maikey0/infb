@@ -272,12 +272,22 @@
   <div id="searchModeBtn">START で機体決定</div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script>
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
 /* =====================================================================
    MOBILE SUIT SELECT SCREEN - "INFINITE BOOST" STYLE (single player demo)
    トランジェントガンダム 3Dプレビュー + 機体選択UI
    ===================================================================== */
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 // ---------------------------------------------------------------------
 // 1. THREE.JS SCENE SETUP
@@ -526,6 +536,39 @@ mech.add(backpack);
 mech.scale.set(1.9,1.9,1.9);
 mech.position.set(0.4,-0.5,0);
 
+// 外部.glbモデルを読み込めた場合はこちらに差し替える（battle_field.htmlと同じモデルを使用）
+let activeMech = mech;
+let mechBaseY = -0.5;
+const glbCandidates = ['frostwing_gundam.glb', './frostwing_gundam.glb', 'assets/frostwing_gundam.glb'];
+function tryLoadGlb(i){
+  if (i>=glbCandidates.length) return; // 読込失敗時は手続き生成モデルのまま
+  const path = glbCandidates[i];
+  const loader = new GLTFLoader();
+  const dracoLoader = new DRACOLoader();
+  dracoLoader.setDecoderPath('https://unpkg.com/three@0.160.0/examples/jsm/libs/draco/');
+  loader.setDRACOLoader(dracoLoader);
+  const ktx2Loader = new KTX2Loader();
+  ktx2Loader.setTranscoderPath('https://unpkg.com/three@0.160.0/examples/jsm/libs/basis/');
+  ktx2Loader.detectSupport(renderer);
+  loader.setKTX2Loader(ktx2Loader);
+  loader.setMeshoptDecoder(MeshoptDecoder);
+  loader.load(path, (gltf)=>{
+    const model = gltf.scene;
+    const box0 = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3(); box0.getSize(size);
+    const scale = size.y>0 ? 4.2/size.y : 1;
+    model.scale.setScalar(scale);
+    const box1 = new THREE.Box3().setFromObject(model);
+    model.position.y -= box1.min.y; // 足が必ず地面付近に来るようオフセット
+    model.position.x = 0.4;
+    scene.add(model);
+    mech.visible = false;
+    activeMech = model;
+    mechBaseY = -1.6;
+  }, undefined, ()=>{ tryLoadGlb(i+1); });
+}
+tryLoadGlb(0);
+
 // ---------------------------------------------------------------------
 // 3. ANIMATION LOOP
 // ---------------------------------------------------------------------
@@ -534,14 +577,15 @@ function animate(){
   requestAnimationFrame(animate);
   const t = clock.getElapsedTime();
 
-  mech.rotation.y = Math.sin(t*0.25)*0.18 + 0.15;
-  mech.position.y = -0.5 + Math.sin(t*0.9)*0.06;
+  activeMech.rotation.y = Math.sin(t*0.25)*0.18 + 0.15;
+  activeMech.position.y = mechBaseY + Math.sin(t*0.9)*0.06;
 
-  wingL.children.forEach((b,i)=>{ b.rotation.z = (-0.15 - i*0.35) + Math.sin(t*0.6+i)*0.04; });
-  wingR.children.forEach((b,i)=>{ b.rotation.z = (0.15 + i*0.35) + Math.sin(t*0.6+i)*0.04; });
-
-  coreGlow.material.emissiveIntensity = 1.8 + Math.sin(t*4)*0.6;
-  visor.material.emissiveIntensity = 1.8 + Math.sin(t*4)*0.6;
+  if (activeMech===mech){
+    wingL.children.forEach((b,i)=>{ b.rotation.z = (-0.15 - i*0.35) + Math.sin(t*0.6+i)*0.04; });
+    wingR.children.forEach((b,i)=>{ b.rotation.z = (0.15 + i*0.35) + Math.sin(t*0.6+i)*0.04; });
+    coreGlow.material.emissiveIntensity = 1.8 + Math.sin(t*4)*0.6;
+    visor.material.emissiveIntensity = 1.8 + Math.sin(t*4)*0.6;
+  }
 
   sparkleGroup.children.forEach(s=>{
     s.position.y += Math.sin(t*s.userData.speed + s.userData.phase)*0.001;

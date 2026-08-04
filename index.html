@@ -356,7 +356,7 @@ function buildBuilding(x,z,w,d,h,color){
   const roofDetail = new THREE.Mesh(new THREE.BoxGeometry(w*0.3,0.6,d*0.3), new THREE.MeshStandardMaterial({color:0x333333}));
   roofDetail.position.set(w*0.15,h+0.3,d*0.1); g.add(roofDetail);
   g.position.set(x,0,z);
-  buildingColliders.push({ minX:x-w/2, maxX:x+w/2, minZ:z-d/2, maxZ:z+d/2 });
+  buildingColliders.push({ minX:x-w/2, maxX:x+w/2, minZ:z-d/2, maxZ:z+d/2, maxY:h });
   return g;
 }
 const buildingColors = [0x9aa0a6,0x8a8f96,0xb5ada0,0x7d838a];
@@ -371,8 +371,24 @@ for (let bx=-20; bx<=60; bx+=22){
 
 // 建物との当たり判定：プレイヤーを建物の外側へ押し出す
 const PLAYER_RADIUS = 0.7;
+// 建物を挟んでいる場合は弾が貫通しないようにする視線判定
+function hasLineOfSight(from, to){
+  const dir = new THREE.Vector3().subVectors(to, from);
+  const dist = dir.length();
+  if (dist < 0.05) return true;
+  dir.normalize();
+  const ray = new THREE.Ray(from, dir);
+  const hit = new THREE.Vector3();
+  for (const b of buildingColliders){
+    const box = new THREE.Box3(new THREE.Vector3(b.minX,0,b.minZ), new THREE.Vector3(b.maxX,b.maxY,b.maxZ));
+    if (ray.intersectBox(box, hit) && from.distanceTo(hit) < dist-0.1) return false;
+  }
+  return true;
+}
+
 function resolveBuildingCollisions(pos){
   for (const b of buildingColliders){
+    if (pos.y > b.maxY + 0.3) continue; // 建物の屋根より高ければ上空を通過できる
     const minX=b.minX-PLAYER_RADIUS, maxX=b.maxX+PLAYER_RADIUS, minZ=b.minZ-PLAYER_RADIUS, maxZ=b.maxZ+PLAYER_RADIUS;
     if (pos.x>minX && pos.x<maxX && pos.z>minZ && pos.z<maxZ){
       const pushLeft = pos.x-minX, pushRight = maxX-pos.x, pushFwd = pos.z-minZ, pushBack = maxZ-pos.z;
@@ -762,6 +778,12 @@ function disposeVfxMesh(mesh){
     else mesh.material.dispose();
   }
 }
+function projectileBlockedByBuilding(pos){
+  for (const b of buildingColliders){
+    if (pos.x>b.minX && pos.x<b.maxX && pos.z>b.minZ && pos.z<b.maxZ && pos.y < b.maxY) return true;
+  }
+  return false;
+}
 function updateProjectiles(dt){
   for (let i=projectiles.length-1;i>=0;i--){
     const p = projectiles[i];
@@ -769,7 +791,11 @@ function updateProjectiles(dt){
     p.pos.addScaledVector(p.dir, p.speed*dt);
     p.mesh.position.copy(p.pos);
     let hit = false;
-    if (p.owner==='player'){
+    if (projectileBlockedByBuilding(p.pos)){
+      // 建物の壁に着弾：貫通せず消滅させる
+      spawnParticleBurst(p.pos.clone(), 0xcccccc, 5, 2);
+      hit = true;
+    } else if (p.owner==='player'){
       const tgt = p.target;
       if (tgt && tgt.alive && !tgt.downed){
         const tp = tgt.group.position.clone().add(new THREE.Vector3(0,1,0));
@@ -953,7 +979,6 @@ function doMainShot(){
   const dir = new THREE.Vector3().subVectors(targetPos, from);
   const tgt = (lockOnHoming() && dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) ? dummy : null;
   spawnProjectile(from, dir, PROJECTILE_SPEED_MAIN, 37, 1, 'player', 0x4fe0ff, tgt, 3.2); // ダウン値1／進行方向に沿った縦長のレンズ状
-  gainAwaken(2);
 }
 function doMainShotIrradiate(dt, spawnVfx){
   // J長押し(2秒チャージ後)：GNパルチザン【照射】持続ビーム。太く、描画は間引いて負荷軽減
@@ -961,8 +986,7 @@ function doMainShotIrradiate(dt, spawnVfx){
   const targetPos = currentTargetPos(26);
   if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   if (spawnVfx) spawnBeam(from, targetPos, 0x8ff0ff, 0.16, 0.85);
-  if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) damageDummy(65*dt, targetPos, 0.5*dt);
-  gainAwaken(0.6);
+  if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26 && hasLineOfSight(from, dummy.group.position)) damageDummy(65*dt, targetPos, 0.5*dt);
 }
 
 function doSubShot(){
@@ -975,14 +999,12 @@ function doSubShot(){
   if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   if (shockwave){
     spawnShockwaveRing(state.pos.clone().add(new THREE.Vector3(0,0.1,0)), 0x8fd6ff, 6);
-    gainAwaken(4);
     if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<7) damageDummy(87, targetPos, 2); // ダウン値2
   } else {
     spawnParticleBurst(from, 0x8fd6ff, 10, 6);
     const dir = new THREE.Vector3().subVectors(targetPos, from);
     const tgt = (lockOnHoming() && dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<24) ? dummy : null;
     spawnProjectile(from, dir, PROJECTILE_SPEED_SUB, 74, 2, 'player', 0x8fd6ff, tgt); // ダウン値2
-    gainAwaken(4);
   }
 }
 
@@ -1003,12 +1025,12 @@ function doSpecialShot(){
       for (let i=0;i<4;i++){
         setTimeout(()=>{ spawnBeam(from.clone().add(new THREE.Vector3((Math.random()-0.5)*1.5,(Math.random()-0.5)*1.5,0)), targetPos, 0xc9a0ff, 0.14, 0.06); }, i*70);
       }
-      if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20) damageDummy(58, targetPos, 1.5); // DEファング
+      if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20 && hasLineOfSight(from, dummy.group.position)) damageDummy(58, targetPos, 1.5); // DEファング
       setTimeout(()=>{
         const from2 = ziEnd.position.clone();
         spawnBeam(from2, targetPos, 0xb489ff, 0.25, 0.14);
         spawnParticleBurst(targetPos, 0xb489ff, 16, 5);
-        if (dummy.alive && !dummy.downed && from2.distanceTo(dummy.group.position)<20) damageDummy(98, targetPos, 1.5); // ショットジエンド
+        if (dummy.alive && !dummy.downed && from2.distanceTo(dummy.group.position)<20 && hasLineOfSight(from2, dummy.group.position)) damageDummy(98, targetPos, 1.5); // ショットジエンド
       }, 420);
     }, 300);
   } else if (mode==='前後'){
@@ -1028,11 +1050,10 @@ function doSpecialShot(){
       const targetPos = currentTargetPos(20);
       spawnBeam(from, targetPos, 0xb489ff, 0.25, 0.08);
       spawnParticleBurst(from, 0xb489ff, 14, 5);
-      if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20) damageDummy(90, targetPos, 2); // デッドエンドフィンガー【照射】
+      if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20 && hasLineOfSight(from, dummy.group.position)) damageDummy(90, targetPos, 2); // デッドエンドフィンガー【照射】
     }, 350);
   }
   setTimeout(()=>{ ziEnd.visible = false; }, 900);
-  gainAwaken(6);
 }
 
 function doIkkaku(){
@@ -1069,7 +1090,6 @@ function doMelee(){
     damageDummy(dmg, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 1.5); // ダウン値1.5(3段コンボで4.5)
     spawnParticleBurst(dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 0xffe97a, 14, 5);
   }
-  gainAwaken(5);
   animatePunch(0.28, -1.6);
 }
 
@@ -1090,7 +1110,6 @@ function doSpecialMelee(){
     }
     if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<12) damageDummy(124, dummy.group.position.clone(), 3);
   }, 260);
-  gainAwaken(8);
 }
 
 function activateBurst(){
@@ -1162,6 +1181,7 @@ function gainAwaken(v){ if (!state.bursting) state.awaken = Math.min(200, state.
 function damageEnemy(e, dmg, hitPos, downValue=0){
   if (!e.alive || e.downed) return;
   e.hp = Math.max(0, e.hp-dmg);
+  gainAwaken(dmg/e.maxHp*100); // 与えたダメージ量に応じて覚醒ゲージ蓄積（全HP分与えると100%）
   e.downValue = (e.downValue||0) + downValue;
   if (e===dummy) document.getElementById('dummyHpFill').style.width = (e.hp/e.maxHp*100)+'%';
   spawnParticleBurst(hitPos || e.group.position.clone(), 0xffcf5a, 8, 4);
@@ -1209,6 +1229,7 @@ function damagePlayer(dmg, fromPos){
   }
   if (state.bursting) actual *= 0.85; // 覚醒中は被ダメージ15%減少
   state.hp = Math.max(0, state.hp-actual);
+  if (actual>0) gainAwaken(actual/MAX_HP*100); // 被弾しても覚醒ゲージが貯まる
   if (actual<=0){
     // ガードに弾が命中した時だけ、わかりやすい八角形のガードエフェクトを表示
     const dir = new THREE.Vector3(Math.sin(state.yaw),0,Math.cos(state.yaw));
@@ -1434,8 +1455,11 @@ function updateMovement(dt){
     state.yaw = angleLerp(state.yaw, bodyTargetYaw, 0.2);
   }
   if (state.locked && dummy.alive){
-    const camTargetYaw = Math.atan2(dummy.group.position.x-state.pos.x, dummy.group.position.z-state.pos.z);
-    state.camYaw = angleLerp(state.camYaw, camTargetYaw, 0.14);
+    const dx = dummy.group.position.x-state.pos.x, dz = dummy.group.position.z-state.pos.z;
+    if (Math.hypot(dx,dz) > 1.2){ // 敵の真上付近では水平方向がほぼ0になり角度が暴れるため、ある程度離れている時だけ更新する
+      const camTargetYaw = Math.atan2(dx, dz);
+      state.camYaw = angleLerp(state.camYaw, camTargetYaw, 0.14);
+    }
   } else {
     // ロック対象がいない時はカメラも機体の向きへゆっくり追従
     state.camYaw = angleLerp(state.camYaw, state.yaw, 0.1);
