@@ -135,6 +135,16 @@
       <div class="wBar"><div class="wBarFill" id="bar_melee"></div></div>
       <div class="wLabel">⑤格闘[U] 長押=無敵</div>
     </div>
+    <div class="wSlot" id="wSlot_csshot" style="background-image:url('images/wslot_1.png'); display:none;">
+      <div class="wNum" id="cnt_csshot">1</div>
+      <div class="wBar"><div class="wBarFill" id="bar_csshot"></div></div>
+      <div class="wLabel">射撃CS[R]</div>
+    </div>
+    <div class="wSlot" id="wSlot_csmelee" style="background-image:url('images/wslot_3.png'); display:none;">
+      <div class="wNum" id="cnt_csmelee">1</div>
+      <div class="wBar"><div class="wBarFill" id="bar_csmelee"></div></div>
+      <div class="wLabel">格闘CS[T]</div>
+    </div>
   </div>
 
   <div id="boostBox" class="imgFrame"><div class="track"><div class="mask" id="boostMask"></div></div></div>
@@ -171,8 +181,15 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 const debugEl = document.getElementById('debugMsg');
 function debugLog(msg){ debugEl.textContent = msg; console.log(msg); }
 
-const MAX_HP = 620;
+const MECH_ID = (function(){
+  try { return localStorage.getItem('selectedMech') || 'transient'; } catch(e){ return 'transient'; }
+})();
+const IS_X1FC = MECH_ID === 'x1fc'; // クロスボーン・ガンダムX1フルクロス
+
+const MAX_HP = IS_X1FC ? 700 : 620;
+const MECH_COST = IS_X1FC ? 3000 : 2500;
 const MAX_BOOST = 100;
+const BOOST_DRAIN_MULT = IS_X1FC ? 0.85 : 1; // フルクロスは2500コスト機よりブースト燃費が良い
 const CHARGE_TIME = 2.0;      // 長押しチャージに必要な秒数
 const IRRADIATE_DURATION = 3.0; // 照射の持続時間
 const INVINCIBLE_DURATION = 4.0; // 無敵の持続時間
@@ -572,7 +589,11 @@ attachPlayerVisual(buildProceduralPlayer());
 debugLog('手続き生成モデルを表示中... 外部.glbを読込中');
 
 let loadedGlbTemplate = null;
-const glbCandidates = [
+const glbCandidates = IS_X1FC ? [
+  'x1_fullcross.glb',
+  './x1_fullcross.glb',
+  'assets/x1_fullcross.glb'
+] : [
   'frostwing_gundam.glb',
   './frostwing_gundam.glb',
   'assets/frostwing_gundam.glb'
@@ -864,14 +885,45 @@ const state = {
   meleeChargeUsed: false,
   irradiateVfxTimer: 0,
   enemyAttackTimer: 3.0,
+  // ---- X1フルクロス専用 ----
+  csShotActive: false, csShotTimeLeft: 0,   // 射撃CS
+  csMeleeActive: false, csMeleeTimeLeft: 0, // 格闘CS
+  fullCrossHP: IS_X1FC ? 120 : 0,           // フルクロスのマント(ビーム防御120、一出撃1回・リロードなし)
+  fullCrossBroken: false,
 };
 
-const weapons = {
+const weapons = IS_X1FC ? {
+  main:    { ammo:5, max:5, reload:Infinity, timer:0, fireCd:0, manualOnly:true }, // メイン射撃：5発・手動リロード専用（特殊格闘でのみ回復）
+  sub:     { ammo:1, max:1, reload:6.0, timer:0 },   // Nサブ射撃（鞭：下→上）
+  sideSub: { ammo:1, max:1, reload:8.0, timer:0 },   // 横サブ射撃（格闘CS中のみ使用可）
+  special: { ammo:1, max:1, reload:8.0, timer:0 },   // 横/前特殊射撃（射撃CS中のみ、強化弾9発）
+  smelee:  { ammo:1, max:1, reload:8.0, timer:0 },   // 特殊格闘：メインリロード
+  csShot:  { ammo:1, max:1, reload:15.0, timer:0 },  // 射撃CS
+  csMelee: { ammo:1, max:1, reload:15.0, timer:0 },  // 格闘CS
+} : {
   main:    { ammo:7, max:7, reload:3.0, timer:0, fireCd:0 },
   sub:     { ammo:1, max:1, reload:6.0, timer:0 },
   special: { ammo:1, max:1, reload:11.0, timer:0 },
   smelee:  { ammo:1, max:1, reload:9.0, timer:0 },
 };
+
+if (IS_X1FC){
+  document.getElementById('wSlot_csshot').style.display = '';
+  document.getElementById('wSlot_csmelee').style.display = '';
+  document.getElementById('controls').innerHTML = `
+    <b>移動</b> WASD　<b>視点</b> ロック中は自動追尾<br>
+    <b>ジャンプ/上昇</b> Space (Boost消費)<br>
+    <b>ステップ</b> Shift+ X前/C後/Z左/V右<br>
+    <b>ダッシュ</b> L(瞬間移動連続)　<b>覚醒</b> Q<br>
+    <b>ロック対象変更</b> C<br>
+    <b>①メイン射撃</b> J (5発手動リロード)<br>
+    <b>②サブ射撃</b> K (N=鞭↑／格闘CS中+A,D=横サブ)<br>
+    <b>③特殊射撃</b> H (N=扇一斉射／射撃CS中+A,D,W=強化弾9発)<br>
+    <b>④特殊格闘</b> I (メイン弾数を全回復)　<b>⑤格闘</b> U (全方向)<br>
+    <b>ガード</b> F　<b>射撃CS</b> R　<b>格闘CS</b> T<br>
+    <span style="opacity:0.7">フルクロス：ビーム攻撃を耐久120ぶん完全無効化（1出撃1回・破損したら復活なし）</span>
+  `;
+}
 
 // ---------------------------------------------------------------------------
 // 6. INPUT — WASD move / mouse look (pointer lock) / full key remap
@@ -924,6 +976,7 @@ function showMsg(text,color='#ffe97a'){
 
 function handleAttackKeyDown(k){
   if (!state.controlsEnabled) return;
+  if (IS_X1FC) return handleAttackKeyDownX1FC(k);
   if (state.mainIrradiating && k!=='j') return; // 照射中は他の武装・移動系キーを封じる
   if (state.guarding && (k==='w'||k==='a'||k==='s'||k==='d'||k==='l'||k==='j'||k==='k'||k==='h'||k==='i'||k==='u'||k==='q')) return; // ガード中は移動と武装を封じる
   if (keys['shift']){
@@ -949,6 +1002,181 @@ function handleAttackKeyDown(k){
       activateBurst();
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// 7b. クロスボーン・ガンダムX1フルクロス 専用武装
+// ---------------------------------------------------------------------------
+function handleAttackKeyDownX1FC(k){
+  if (state.guarding && (k==='w'||k==='a'||k==='s'||k==='d'||k==='l'||k==='j'||k==='k'||k==='h'||k==='i'||k==='u'||k==='q'||k==='r'||k==='t')) return; // ガード中は移動と武装を封じる
+  if (keys['shift']){
+    if (k==='w'){ doStep('front'); return; }
+    if (k==='s'){ doStep('back'); return; }
+    if (k==='a'){ doStep('right'); return; }
+    if (k==='d'){ doStep('left'); return; }
+  }
+  if (k==='control' || k==='c'){ cycleTarget(); return; }
+  if (k==='l'){ doDashBurst(); return; }
+  if (k==='j'){ if (state.attackLock<=0) doMainShotX1FC(); return; }
+  if (k==='u'){ if (state.attackLock<=0) doMeleeX1FC(); return; }
+  if (state.attackLock>0) return;
+  if (k==='k') doSubShotX1FC();
+  else if (k==='h') doSpecialShotX1FC();
+  else if (k==='i') doSpecialMeleeX1FC();
+  else if (k==='r') activateCsShot();
+  else if (k==='t') activateCsMelee();
+  else if (k==='q'){
+    if (state.bursting){
+      if (keys['s']) doGPortentCall(); else doBurstLancer();
+    } else {
+      activateBurst();
+    }
+  }
+}
+
+function doMainShotX1FC(){
+  // メイン射撃：5発・手動リロード式実弾（特殊格闘でのみ弾数回復）
+  const w = weapons.main;
+  if (w.fireCd>0 || w.ammo<=0) return;
+  w.ammo--; w.fireCd = 0.22;
+  const from = muzzlePoint();
+  const targetPos = currentTargetPos(26);
+  if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
+  spawnParticleBurst(from, 0xffe14d, 4, 3);
+  const dir = new THREE.Vector3().subVectors(targetPos, from);
+  const tgt = (lockOnHoming() && dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) ? dummy : null;
+  spawnProjectile(from, dir, PROJECTILE_SPEED_MAIN, 40, 1, 'player', 0xffe14d, tgt, 2.4); // ダウン値1
+}
+
+function doNSubWhipX1FC(){
+  // Nサブ射撃：鞭を下から上へ薙ぎ払う
+  const w = weapons.sub;
+  if (w.timer>0 || w.ammo<=0) return;
+  w.ammo--; w.timer = w.reload;
+  state.attackLock = 0.5;
+  if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
+  animatePunch(0.35,-1.4);
+  const from = muzzlePoint(0.4);
+  const to = muzzlePoint(2.4);
+  spawnBeam(from, to, 0xffe14d, 0.2, 0.1);
+  spawnParticleBurst(to, 0xffe14d, 12, 5);
+  if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<6) damageDummy(78, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 1); // ダウン値1
+}
+
+function doSideSubX1FC(){
+  // 横サブ射撃（格闘CS中のみ）：入力方向へ動きながら鞭を横に薙ぎ払う
+  const w = weapons.sideSub;
+  if (!state.csMeleeActive || w.timer>0 || w.ammo<=0) return;
+  w.ammo--; w.timer = w.reload;
+  state.attackLock = 0.5;
+  const lateral = keys['a'] ? -1 : (keys['d'] ? 1 : 0);
+  const side = new THREE.Vector3(Math.cos(state.yaw)*lateral, 0, -Math.sin(state.yaw)*lateral);
+  state.pos.addScaledVector(side, 2.4);
+  if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
+  animatePunch(0.35, 1.4);
+  const from = muzzlePoint(0.9);
+  const to = from.clone().addScaledVector(side, 3.5);
+  spawnBeam(from, to, 0xffb46a, 0.2, 0.1);
+  spawnParticleBurst(to, 0xffb46a, 14, 5);
+  if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<6) damageDummy(85, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 1);
+}
+
+function doSubShotX1FC(){
+  const lateral = keys['a']||keys['d'];
+  if (lateral && state.csMeleeActive) doSideSubX1FC(); else doNSubWhipX1FC();
+}
+
+function doSpecialShotX1FC(){
+  const lateral = keys['a']||keys['d'];
+  const forward = keys['w'];
+  if (state.csShotActive && (lateral||forward)){
+    // 横/前特殊射撃：射撃CS中のみ。回転しながら強化弾を最大9発発射
+    const w = weapons.special;
+    if (w.timer>0 || w.ammo<=0) return;
+    w.ammo--; w.timer = w.reload;
+    state.attackLock = 0.6;
+    const spinSign = keys['a'] ? -1 : 1;
+    const from0 = muzzlePoint();
+    const targetPos = currentTargetPos(28);
+    if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
+    for (let i=0;i<9;i++){
+      setTimeout(()=>{
+        const ang = state.yaw + spinSign*i*0.18*(forward && !lateral ? 0 : 1); // 前特殊は回転方向が前になる＝進行方向のみ、横特殊は左右へ回転
+        const from = muzzlePoint().add(new THREE.Vector3(Math.sin(ang)*0.4,0,Math.cos(ang)*0.4));
+        const dir = new THREE.Vector3().subVectors(targetPos, from);
+        const tgt = (lockOnHoming() && dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<28) ? dummy : null;
+        spawnProjectile(from, dir, PROJECTILE_SPEED_MAIN*1.3, 22, 0.6, 'player', 0xfff0a0, tgt, 2.0); // メインより弾速・誘導強化
+      }, i*40);
+    }
+  } else {
+    // N特殊射撃：停止撃ちでメイン残弾を全消費して扇状に一斉発射（最大9発まで）
+    const w = weapons.main;
+    if (w.ammo<=0) return;
+    const shots = Math.min(w.ammo, 9);
+    w.ammo -= shots;
+    state.attackLock = 0.7;
+    const from = muzzlePoint();
+    const targetPos = currentTargetPos(26);
+    if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
+    const spread = 0.5; // 扇状の開き角
+    for (let i=0;i<shots;i++){
+      const t = shots<=1 ? 0 : (i/(shots-1))-0.5;
+      const ang = state.yaw + t*spread;
+      const dir = new THREE.Vector3(Math.sin(ang),0,Math.cos(ang));
+      const tgt = (lockOnHoming() && dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) ? dummy : null;
+      spawnProjectile(from.clone(), dir, PROJECTILE_SPEED_MAIN, 26, 0.8, 'player', 0xffe14d, tgt, 2.0);
+    }
+    spawnParticleBurst(from, 0xffe14d, 10, 5);
+  }
+}
+
+function doSpecialMeleeX1FC(){
+  // 特殊格闘：メイン射撃の弾数を全回復（手動リロード）
+  const w = weapons.smelee;
+  if (w.timer>0 || w.ammo<=0) return;
+  w.ammo--; w.timer = w.reload;
+  state.attackLock = 0.9;
+  animatePunch(0.4,-1.8);
+  weapons.main.ammo = weapons.main.max;
+  weapons.main.fireCd = 0;
+  showMsg('メイン装弾！', '#ffe14d');
+}
+
+function doMeleeX1FC(){
+  // 格闘：全方向に対応するコンボ（威力・追従は格闘CSで強化）
+  if (state.attackLock>0) return;
+  const distToDummy = dummy.alive ? state.pos.distanceTo(dummy.group.position) : 999;
+  const trackRange = state.csMeleeActive ? 4.6 : 3.8; // 格闘CS中は追従性能アップ
+  if (distToDummy>3.5 && distToDummy<40){
+    facePlayerToward(dummy.group.position);
+    const dir = new THREE.Vector3().subVectors(dummy.group.position, state.pos).normalize();
+    state.pos.addScaledVector(dir, Math.min(3.4, distToDummy-2.0));
+  }
+  state.comboStep = (state.comboStep % 4) + 1; // 全方向4段
+  state.attackLock = 0.3;
+  if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<trackRange){
+    const baseDmg = [88,96,104,148][state.comboStep-1];
+    const dmg = state.csMeleeActive ? Math.round(baseDmg*1.15) : baseDmg; // 格闘CS中は格闘威力+15%
+    damageDummy(dmg, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 1.4);
+    spawnParticleBurst(dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 0xffe14d, 14, 5);
+  }
+  animatePunch(0.28,-1.6);
+}
+
+function activateCsShot(){
+  const w = weapons.csShot;
+  if (w.timer>0 || w.ammo<=0 || state.csShotActive) return;
+  w.ammo--; w.timer = w.reload;
+  state.csShotActive = true; state.csShotTimeLeft = 10.0;
+  weapons.main.max = 18; weapons.main.ammo = 18;
+  showMsg('射撃CS発動！', '#8fd6ff');
+}
+function activateCsMelee(){
+  const w = weapons.csMelee;
+  if (w.timer>0 || w.ammo<=0 || state.csMeleeActive) return;
+  w.ammo--; w.timer = w.reload;
+  state.csMeleeActive = true; state.csMeleeTimeLeft = 10.0;
+  showMsg('格闘CS発動！', '#ffb46a');
 }
 
 // ---------------------------------------------------------------------------
@@ -1228,6 +1456,16 @@ function damagePlayer(dmg, fromPos){
     if (facing.dot(toAttacker) > 0.5) actual = 0; // 前方からの攻撃はノーダメージ
   }
   if (state.bursting) actual *= 0.85; // 覚醒中は被ダメージ15%減少
+  if (IS_X1FC && state.csShotActive && state.csMeleeActive) actual *= 0.8; // 射撃CS+格闘CS同時発動：被ダメージ-20%
+  // フルクロス：耐久が1でも残っていればビーム攻撃を何発でも無効化（被弾硬直も無効）。
+  // 耐久値ぶんだけ蓄積ダメージとして消費し、0になったら消失（一出撃1回・リロード無し・コストオーバーでも復活しない）
+  if (IS_X1FC && actual>0 && state.fullCrossHP>0){
+    state.fullCrossHP = Math.max(0, state.fullCrossHP - actual);
+    const hitPos2 = state.pos.clone().add(new THREE.Vector3(0,1.3,0));
+    spawnGuardOctagon(hitPos2, 0xffe14d, 2.6);
+    if (state.fullCrossHP<=0 && !state.fullCrossBroken){ state.fullCrossBroken = true; showMsg('フルクロス破損！', '#ff8a1c'); }
+    return;
+  }
   state.hp = Math.max(0, state.hp-actual);
   if (actual>0) gainAwaken(actual/MAX_HP*100); // 被弾しても覚醒ゲージが貯まる
   if (actual<=0){
@@ -1239,12 +1477,13 @@ function damagePlayer(dmg, fromPos){
   }
   spawnParticleBurst(state.pos.clone().add(new THREE.Vector3(0,1.2,0)), 0xff5a3c, 10, 4);
   if (state.hp<=0){
-    state.costTeam = Math.max(0, state.costTeam-2500);
+    state.costTeam = Math.max(0, state.costTeam-MECH_COST);
     showMsg('DOWN!', '#ff5a3c');
     state.hp = MAX_HP;
     state.meleeChargeUsed = false; // 生存中1回制限を撃墜でリセット
     state.pos.set(-4,0,4);
     state.awaken = 0; state.bursting = false;
+    // ※フルクロスのfullCrossHPはここでリセットしない（一出撃1回・コストオーバーでも復活しない仕様）
   }
 }
 
@@ -1369,7 +1608,7 @@ function doDashBurst(){
   spawnBlinkTrail(state.pos);
   state.pos.addScaledVector(dir, 5.5); // 最初の一瞬だけ瞬間移動的にビュンと進む
   spawnBlinkTrail(state.pos);
-  state.boost = Math.max(0, state.boost-10);
+  state.boost = Math.max(0, state.boost-10*BOOST_DRAIN_MULT);
 }
 function doStep(name){
   if (state.boost<15) return;
@@ -1418,7 +1657,7 @@ function updateMovement(dt){
     if (playerVisual){ playerRoot.position.set(state.pos.x, state.pos.y + playerFootOffset, state.pos.z); playerRoot.rotation.y = state.yaw; }
     return;
   }
-  const speedBase = 7.0;
+  const speedBase = 7.0 * ((IS_X1FC && state.csShotActive) ? 1.2 : 1); // 射撃CS中は機動力上昇
   let mx=0, mz=0;
   if (keys['w']) mz -= 1;
   if (keys['s']) mz += 1;
@@ -1466,7 +1705,7 @@ function updateMovement(dt){
   }
 
   if (dashing){
-    state.boost = Math.max(0, state.boost - dt*30);
+    state.boost = Math.max(0, state.boost - dt*30*BOOST_DRAIN_MULT);
     if (Math.random()<0.5) spawnBlinkTrail(state.pos);
     if (state.boost<=0) state.overheated = true;
   }
@@ -1475,7 +1714,7 @@ function updateMovement(dt){
   const wasGrounded = state.pos.y<=0.001;
   if (keys[' '] && state.boost>0 && canAct && !guardingNow){
     state.pos.y = Math.min(30, state.pos.y + 9*dt);
-    state.boost = Math.max(0, state.boost - dt*17);
+    state.boost = Math.max(0, state.boost - dt*17*BOOST_DRAIN_MULT);
     state.ascending = true;
     state.wasAirborne = true;
     if (state.boost<=0) state.overheated = true;
@@ -1502,7 +1741,7 @@ function updateMovement(dt){
   clampToStage(state.pos);
 
   state.guarding = guardingNow;
-  if (state.guarding) state.boost = Math.max(0, state.boost - dt*12);
+  if (state.guarding) state.boost = Math.max(0, state.boost - dt*12*BOOST_DRAIN_MULT);
 
   // ブースト回復：着地直後は指定時間で満タンへ。地上にいる間のみ緩やかに自然回復（空中では回復しない＝オーバーヒート落下がふらつかない）
   if (state.boostRegenTimer>0){
@@ -1610,6 +1849,7 @@ function updateCostUI(){
   document.getElementById('costL2').textContent = state.costEnemy;
 }
 function updateWeaponUI(){
+  if (IS_X1FC) return updateWeaponUIX1FC();
   const map = [['sub','bar_sub','cnt_sub'],['special','bar_special','cnt_special'],['smelee','bar_smelee','cnt_smelee']];
   map.forEach(([key,barId,cntId])=>{
     const w = weapons[key];
@@ -1641,6 +1881,33 @@ function updateWeaponUI(){
     meleeBar.style.width = state.attackLock>0 ? '20%' : '100%';
     meleeNum.textContent = state.meleeChargeUsed ? 0 : 100;
   }
+  document.getElementById('wSlot_melee').classList.toggle('ready', state.attackLock<=0);
+}
+function updateWeaponUIX1FC(){
+  // メイン射撃：弾数のみ（手動リロード・自動チャージなし）
+  document.getElementById('bar_main').style.width = ((weapons.main.ammo/weapons.main.max)*100)+'%';
+  document.getElementById('cnt_main').textContent = weapons.main.ammo;
+  document.getElementById('wSlot_main').classList.toggle('ready', weapons.main.fireCd<=0 && weapons.main.ammo>0);
+
+  const map = [['sub','bar_sub','cnt_sub'],['special','bar_special','cnt_special'],['smelee','bar_smelee','cnt_smelee'],['csShot','bar_csshot','cnt_csshot'],['csMelee','bar_csmelee','cnt_csmelee']];
+  map.forEach(([key,barId,cntId])=>{
+    const w = weapons[key];
+    const barEl = document.getElementById(barId);
+    const ready = w.timer<=0 && w.ammo>0;
+    const pct = w.timer<=0 ? 100 : (1 - w.timer/w.reload)*100;
+    barEl.style.width = pct+'%';
+    document.getElementById(cntId).textContent = w.ammo;
+    barEl.closest('.wSlot').classList.toggle('ready', ready);
+  });
+  document.getElementById('wSlot_special').querySelector('.wLabel').textContent = state.csShotActive ? 'N/横/前特殊射撃[H]' : 'N特殊射撃[H]（射撃CSで横/前解放）';
+  document.getElementById('wSlot_sub').querySelector('.wLabel').textContent = state.csMeleeActive ? 'Nサブ[K]/横サブ[A・D+K]' : 'Nサブ射撃[K]（格闘CSで横解放）';
+  document.getElementById('wSlot_csshot').classList.toggle('active', state.csShotActive);
+  document.getElementById('wSlot_csmelee').classList.toggle('active', state.csMeleeActive);
+
+  const meleeBar = document.getElementById('bar_melee');
+  const meleeNum = document.getElementById('cnt_melee');
+  meleeBar.style.width = state.attackLock>0 ? '20%' : '100%';
+  meleeNum.textContent = state.csMeleeActive ? 'CS' : '-';
   document.getElementById('wSlot_melee').classList.toggle('ready', state.attackLock<=0);
 }
 function updateBoostExUI(){
@@ -1675,10 +1942,25 @@ function animate(){
   updateVfx(dt);
 
   Object.values(weapons).forEach(w=>{ if (w.timer>0) w.timer = Math.max(0,w.timer-dt); if (w.fireCd>0) w.fireCd = Math.max(0,w.fireCd-dt); });
-  Object.values(weapons).forEach(w=>{ if (w.ammo!==Infinity && w.ammo<w.max && w.timer<=0){ w.ammo++; if (w.ammo<w.max) w.timer = w.reload; } });
+  Object.values(weapons).forEach(w=>{ if (!w.manualOnly && w.ammo!==Infinity && w.ammo<w.max && w.timer<=0){ w.ammo++; if (w.ammo<w.max) w.timer = w.reload; } });
 
   if (state.attackLock>0) state.attackLock = Math.max(0,state.attackLock-dt);
   if (state.bursting){ state.burstTime -= 10*dt; if (state.burstTime<=0){ state.burstTime=0; state.bursting=false; } }
+
+  if (IS_X1FC){
+    if (state.csShotActive){
+      state.csShotTimeLeft -= dt;
+      if (state.csShotTimeLeft<=0){
+        state.csShotActive = false; state.csShotTimeLeft = 0;
+        weapons.main.max = 5; weapons.main.ammo = Math.min(weapons.main.ammo, 5); // CS終了で弾数上限を戻す
+        showMsg('射撃CS終了', '#8fd6ff');
+      }
+    }
+    if (state.csMeleeActive){
+      state.csMeleeTimeLeft -= dt;
+      if (state.csMeleeTimeLeft<=0){ state.csMeleeActive = false; state.csMeleeTimeLeft = 0; showMsg('格闘CS終了', '#ffb46a'); }
+    }
+  }
 
   enemies.forEach(e=>{
     if (e.downed){

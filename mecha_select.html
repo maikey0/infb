@@ -534,11 +534,11 @@ backpack.position.set(0,0.35,-0.42);
 mech.add(backpack);
 
 mech.scale.set(1.9,1.9,1.9);
-mech.position.set(0.4,-0.5,0);
+mech.position.set(0.4,0.15,0);
 
 // 外部.glbモデルを読み込めた場合はこちらに差し替える（battle_field.htmlと同じモデルを使用）
 let activeMech = mech;
-let mechBaseY = -0.5;
+let mechBaseY = 0.15;
 const glbCandidates = ['frostwing_gundam.glb', './frostwing_gundam.glb', 'assets/frostwing_gundam.glb'];
 function tryLoadGlb(i){
   if (i>=glbCandidates.length) return; // 読込失敗時は手続き生成モデルのまま
@@ -564,7 +564,7 @@ function tryLoadGlb(i){
     scene.add(model);
     mech.visible = false;
     activeMech = model;
-    mechBaseY = -1.6;
+    mechBaseY = -0.9;
   }, undefined, ()=>{ tryLoadGlb(i+1); });
 }
 tryLoadGlb(0);
@@ -609,18 +609,19 @@ window.addEventListener('resize', ()=>{
 //    of the reference screenshot, to be built out in future turns)
 // ---------------------------------------------------------------------
 const UNITS = [
-  { name:'エクストリームガンダム', cost:2500, mastery:'', icon:'⚔', locked:true },
-  { name:'N-EXTREMEガンダム\nエクスプロージョン', cost:2500, mastery:'', icon:'💥', locked:true },
-  { name:'N-EXTREMEガンダム\nヴィシス', cost:2500, mastery:'', icon:'🛡', locked:true },
-  { name:'N-EXTREMEガンダム\nスプレマシー', cost:1500, mastery:'', icon:'✦', locked:true },
-  { name:'トランジェントガンダム', cost:2500, mastery:'MASTER', icon:'✈', locked:false, stars:5 },
-  { name:'マイティーストライク\nフリーダムガンダム', cost:3000, mastery:'', icon:'🕊', locked:true },
-  { name:'ガンダム', cost:2000, mastery:'', icon:'Ⓖ', locked:true },
-  { name:'ガンダム(重装)', cost:2500, mastery:'', icon:'🛡', locked:true },
-  { name:'ジオング', cost:2500, mastery:'', icon:'☠', locked:true },
-  { name:'シャア専用ゲルググ', cost:2000, mastery:'', icon:'⚡', locked:true },
-  { name:'シャア専用ザクII', cost:1500, mastery:'', icon:'⚡', locked:true },
-  { name:'ザクII', cost:1500, mastery:'', icon:'●', locked:true },
+  { id:null, name:'エクストリームガンダム', cost:2500, mastery:'', icon:'⚔', locked:true },
+  { id:null, name:'N-EXTREMEガンダム\nエクスプロージョン', cost:2500, mastery:'', icon:'💥', locked:true },
+  { id:null, name:'N-EXTREMEガンダム\nヴィシス', cost:2500, mastery:'', icon:'🛡', locked:true },
+  { id:null, name:'N-EXTREMEガンダム\nスプレマシー', cost:1500, mastery:'', icon:'✦', locked:true },
+  { id:'transient', name:'トランジェントガンダム', cost:2500, mastery:'MASTER', icon:'✈', locked:false, stars:5 },
+  { id:'x1fc', name:'クロスボーン・ガンダム\nX1フルクロス', cost:3000, mastery:'', icon:'💀', locked:false, stars:1 },
+  { id:null, name:'マイティーストライク\nフリーダムガンダム', cost:3000, mastery:'', icon:'🕊', locked:true },
+  { id:null, name:'ガンダム', cost:2000, mastery:'', icon:'Ⓖ', locked:true },
+  { id:null, name:'ガンダム(重装)', cost:2500, mastery:'', icon:'🛡', locked:true },
+  { id:null, name:'ジオング', cost:2500, mastery:'', icon:'☠', locked:true },
+  { id:null, name:'シャア専用ゲルググ', cost:2000, mastery:'', icon:'⚡', locked:true },
+  { id:null, name:'シャア専用ザクII', cost:1500, mastery:'', icon:'⚡', locked:true },
+  { id:null, name:'ザクII', cost:1500, mastery:'', icon:'●', locked:true },
 ];
 
 let selectedIndex = 4; // トランジェントガンダム
@@ -679,6 +680,7 @@ document.getElementById('searchModeBtn').addEventListener('click', confirmSelect
 function confirmSelection(){
   const u = UNITS[selectedIndex];
   if (u.locked) return;
+  try { localStorage.setItem('selectedMech', u.id || 'transient'); } catch(e){}
   const btn = document.getElementById('searchModeBtn');
   btn.textContent = `${u.name.replace('\n','')} 出撃準備中...`;
   btn.style.pointerEvents = 'none';
