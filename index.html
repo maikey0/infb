@@ -404,7 +404,11 @@ function closestPointOnSegment(px,pz,ax,az,bx,bz){
   return { x:ax+abx*t, z:az+abz*t };
 }
 function clampToStage(pos){
-  if (pointInStagePolygon(pos.x,pos.z)) return;
+  // ※重要：この関数はpos自身を書き換えつつ、戻り値としても必ずposを返す。
+  //   以前は戻り値がなく(undefinedを返す)、呼び出し側の e.group.position.copy(clampToStage(next))
+  //   が .copy(undefined) となって例外が発生 → 描画(renderer.render)まで到達できず画面がフリーズしていた。
+  //   （敵がプレイヤーの弾を避けてダッシュする際に必ず通る処理のため、着弾直前に固まって見えていた）
+  if (pointInStagePolygon(pos.x,pos.z)) return pos;
   let best=null, bestDist=Infinity;
   for (let i=0,j=STAGE_BOUNDARY.length-1;i<STAGE_BOUNDARY.length;j=i++){
     const p = closestPointOnSegment(pos.x,pos.z, STAGE_BOUNDARY[j].x,STAGE_BOUNDARY[j].z, STAGE_BOUNDARY[i].x,STAGE_BOUNDARY[i].z);
@@ -412,6 +416,7 @@ function clampToStage(pos){
     if (d<bestDist){ bestDist=d; best=p; }
   }
   if (best){ pos.x = best.x; pos.z = best.z; }
+  return pos;
 }
 
 // industrial facility (tower + tanks) toward the back
@@ -659,6 +664,13 @@ let dummy = enemies[0]; // 常にロック中の敵を指す（毎フレーム�
 // ---------------------------------------------------------------------------
 const vfxList = [];
 const projectiles = []; // 弾速を持つ実弾（プレイヤー/敵 共通）
+// ---- 高頻度に生成するVFX用の共有ジオメトリ（毎回newすると命中の度に負荷が積み重なりフリーズの原因になるため使い回す） ----
+const GEO_UNIT_SPHERE = new THREE.SphereGeometry(1,8,8); GEO_UNIT_SPHERE.__shared = true;
+const GEO_PARTICLE = new THREE.SphereGeometry(0.06,6,6); GEO_PARTICLE.__shared = true;
+const GEO_RING_SHOCK = new THREE.RingGeometry(0.1,0.4,32); GEO_RING_SHOCK.__shared = true;
+const GEO_RING_OCTAGON = new THREE.RingGeometry(0.06,0.34,8); GEO_RING_OCTAGON.__shared = true;
+const GEO_BULLET_MAIN = new THREE.SphereGeometry(1,8,6); GEO_BULLET_MAIN.__shared = true; // メイン弾（縦長レンズ状）用の基準形状
+
 function spawnBeam(from,to,color=0x4fe0ff,life=0.15,thickness=0.06){
   const dir = new THREE.Vector3().subVectors(to,from);
   const len = Math.max(0.05, dir.length());
@@ -672,7 +684,7 @@ function spawnBeam(from,to,color=0x4fe0ff,life=0.15,thickness=0.06){
 }
 function spawnParticleBurst(pos,color=0x4fe0ff,count=18,speed=4){
   for (let i=0;i<count;i++){
-    const s = new THREE.Mesh(new THREE.SphereGeometry(0.06,6,6), new THREE.MeshBasicMaterial({color,transparent:true,opacity:1}));
+    const s = new THREE.Mesh(GEO_PARTICLE, new THREE.MeshBasicMaterial({color,transparent:true,opacity:1}));
     s.position.copy(pos);
     const dir = new THREE.Vector3((Math.random()-0.5),(Math.random()-0.2),(Math.random()-0.5)).normalize().multiplyScalar(speed*(0.4+Math.random()*0.8));
     scene.add(s);
@@ -680,14 +692,14 @@ function spawnParticleBurst(pos,color=0x4fe0ff,count=18,speed=4){
   }
 }
 function spawnShockwaveRing(pos,color=0x4fe0ff,maxR=4){
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.1,0.4,32), new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.85, side:THREE.DoubleSide }));
+  const ring = new THREE.Mesh(GEO_RING_SHOCK, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.85, side:THREE.DoubleSide }));
   ring.rotation.x = -Math.PI/2; ring.position.copy(pos); ring.position.y = 0.05;
   scene.add(ring);
   vfxList.push({ mesh:ring, life:0.6, age:0, type:'ring', maxR });
 }
 function spawnGuardOctagon(pos,color=0x8fe8ff,maxR=2.4){
   // 拡大しながらフェードする八角形リング（ガードに弾が当たった時のみ表示）
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.06,0.34,8), new THREE.MeshBasicMaterial({ color, transparent:true, opacity:1, side:THREE.DoubleSide }));
+  const ring = new THREE.Mesh(GEO_RING_OCTAGON, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:1, side:THREE.DoubleSide }));
   ring.position.copy(pos);
   scene.add(ring);
   vfxList.push({ mesh:ring, life:0.42, age:0, type:'octagon', maxR });
@@ -700,7 +712,8 @@ function spawnGuardOctagon(pos,color=0x8fe8ff,maxR=2.4){
   vfxList.push({ mesh:light, life:0.25, age:0, type:'fade' });
 }
 function spawnBlinkTrail(pos, size=0.5){
-  const s = new THREE.Mesh(new THREE.SphereGeometry(size,8,8), new THREE.MeshBasicMaterial({color:0x8fe8ff, transparent:true, opacity:0.5}));
+  const s = new THREE.Mesh(GEO_UNIT_SPHERE, new THREE.MeshBasicMaterial({color:0x8fe8ff, transparent:true, opacity:0.5}));
+  s.scale.setScalar(size);
   s.position.copy(pos).add(new THREE.Vector3(0,1,0));
   scene.add(s);
   vfxList.push({ mesh:s, life:0.25, age:0, type:'fade' });
@@ -709,7 +722,7 @@ function updateVfx(dt){
   for (let i=vfxList.length-1;i>=0;i--){
     const v = vfxList[i]; v.age += dt;
     const t = v.age / v.life;
-    if (t>=1){ scene.remove(v.mesh); vfxList.splice(i,1); continue; }
+    if (t>=1){ scene.remove(v.mesh); disposeVfxMesh(v.mesh); vfxList.splice(i,1); continue; }
     if (v.type==='fade'){
       if (v.mesh.material) v.mesh.material.opacity = 1-t;
       if (v.mesh.intensity!==undefined) v.mesh.intensity = 2*(1-t);
@@ -727,13 +740,27 @@ function updateVfx(dt){
   }
 }
 
-function spawnProjectile(from, dir, speed, damage, downValue, owner, color=0x4fe0ff, target=null){
+function spawnProjectile(from, dir, speed, damage, downValue, owner, color=0x4fe0ff, target=null, elongate=1){
   // 弾速を持つ実弾。ownerが'player'なら敵(target)に、'enemy'ならプレイヤーに当たり判定する
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.24,8,8), new THREE.MeshBasicMaterial({ color }));
+  // ※以前は弾ごとにPointLightを追加し、さらに毎回新規ジオメトリを作成していたため、
+  //   連射すると描画負荷が急増してフリーズする原因になっていた。共有ジオメトリ＋発光マテリアルのみで表現する
+  const nd = dir.clone().normalize();
+  const mesh = new THREE.Mesh(GEO_BULLET_MAIN, new THREE.MeshBasicMaterial({ color }));
   mesh.position.copy(from);
+  mesh.scale.set(0.24*(1/Math.sqrt(elongate)), 0.24*(1/Math.sqrt(elongate)), 0.24*elongate); // 進行方向(ローカルZ)に沿った縦長のレンズ状にする
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), nd);
   scene.add(mesh);
-  const light = new THREE.PointLight(color, 1.4, 4); mesh.add(light);
-  projectiles.push({ mesh, pos:from.clone(), dir:dir.clone().normalize(), speed, damage, downValue, owner, target, hitRadius:1.5, life:3.0, age:0 });
+  projectiles.push({ mesh, pos:from.clone(), dir:nd, speed, damage, downValue, owner, target, hitRadius:1.5, life:3.0, age:0 });
+}
+function disposeVfxMesh(mesh){
+  // シーンから外したメッシュのgeometry/materialを解放し、GPUメモリの蓄積によるフリーズを防ぐ
+  // （共有ジオメトリは他のメッシュも使い回しているため解放しない）
+  if (!mesh) return;
+  if (mesh.geometry && !mesh.geometry.__shared) mesh.geometry.dispose();
+  if (mesh.material){
+    if (Array.isArray(mesh.material)) mesh.material.forEach(m=>m.dispose());
+    else mesh.material.dispose();
+  }
 }
 function updateProjectiles(dt){
   for (let i=projectiles.length-1;i>=0;i--){
@@ -761,6 +788,7 @@ function updateProjectiles(dt){
     }
     if (hit || p.age>p.life){
       scene.remove(p.mesh);
+      disposeVfxMesh(p.mesh);
       projectiles.splice(i,1);
     }
   }
@@ -924,7 +952,7 @@ function doMainShot(){
   spawnParticleBurst(from, 0x4fe0ff, 4, 3); // マズルフラッシュ
   const dir = new THREE.Vector3().subVectors(targetPos, from);
   const tgt = (lockOnHoming() && dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) ? dummy : null;
-  spawnProjectile(from, dir, PROJECTILE_SPEED_MAIN, 37, 1, 'player', 0x4fe0ff, tgt); // ダウン値1
+  spawnProjectile(from, dir, PROJECTILE_SPEED_MAIN, 37, 1, 'player', 0x4fe0ff, tgt, 3.2); // ダウン値1／進行方向に沿った縦長のレンズ状
   gainAwaken(2);
 }
 function doMainShotIrradiate(dt, spawnVfx){
