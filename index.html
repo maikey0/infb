@@ -77,6 +77,12 @@
   #clickToStart { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.55); font-size:20px; letter-spacing:3px; color:#dff; pointer-events:auto; cursor:pointer; text-align:center; }
   #stateMsg { position:absolute; top:40%; left:50%; transform:translate(-50%,-50%); font-size:32px; font-weight:800; letter-spacing:6px; color:#ffe97a; text-shadow:0 0 20px rgba(255,220,120,0.9); opacity:0; pointer-events:none; }
   #debugMsg { position:absolute; bottom:2px; left:2px; font-size:11px; color:#9f9; opacity:0.9; max-width:90%; background:rgba(0,0,0,0.4); padding:2px 6px; }
+
+  /* ===== GAME OVER (勝敗決着オーバーレイ) ===== */
+  #gameOverScreen { position:absolute; inset:0; z-index:5; display:none; align-items:center; justify-content:center; flex-direction:column; gap:14px; background:rgba(0,0,0,0.72); pointer-events:auto; cursor:pointer; }
+  #gameOverScreen .title { font-size:64px; font-weight:800; letter-spacing:10px; text-shadow:0 0 30px rgba(255,255,255,0.5); }
+  #gameOverScreen .sub { font-size:14px; letter-spacing:2px; color:#bfe6ff; }
+  #gameOverScreen .cd { font-size:12px; letter-spacing:2px; color:#8fa6bb; }
   #loadingScreen { position:fixed; inset:0; background:#000; z-index:10; display:flex; align-items:center; justify-content:center; color:#7fd8ff; font-size:16px; letter-spacing:4px; flex-direction:column; gap:10px; }
 </style>
 </head>
@@ -164,6 +170,12 @@
   <div id="stateMsg"></div>
   <div id="debugMsg"></div>
   <div id="clickToStart">クリックして開始</div>
+
+  <div id="gameOverScreen">
+    <div class="title" id="gameOverTitle">WIN</div>
+    <div class="sub">クリックでリスタート</div>
+    <div class="cd" id="gameOverCountdown">30s</div>
+  </div>
 </div>
 
 <script type="importmap">
@@ -382,12 +394,21 @@ function buildBuilding(x,z,w,d,h,color){
   return g;
 }
 const buildingColors = [0x9aa0a6,0x8a8f96,0xb5ada0,0x7d838a];
+// スポーン地点（自機・敵機）の周囲には建物を生成しない
+const SPAWN_CLEAR_POINTS = [ {x:-4,z:4}, {x:8,z:-6}, {x:-10,z:-16} ];
+const SPAWN_CLEARANCE = 9;
 let bi=0;
 for (let bx=-20; bx<=60; bx+=22){
   for (let bz=-40; bz<=40; bz+=26){
     if (Math.random()<0.25) continue;
     const w=8+Math.random()*6, d=8+Math.random()*6, h=6+Math.random()*16;
-    stageGroup.add(buildBuilding(bx+(Math.random()-0.5)*6, bz+(Math.random()-0.5)*6, w,d,h, buildingColors[bi++%buildingColors.length]));
+    const px = bx+(Math.random()-0.5)*6, pz = bz+(Math.random()-0.5)*6;
+    const blocksSpawn = SPAWN_CLEAR_POINTS.some(sp =>
+      sp.x > px-w/2-SPAWN_CLEARANCE && sp.x < px+w/2+SPAWN_CLEARANCE &&
+      sp.z > pz-d/2-SPAWN_CLEARANCE && sp.z < pz+d/2+SPAWN_CLEARANCE
+    );
+    if (blocksSpawn) continue; // スポーン地点にかぶる建物は配置しない
+    stageGroup.add(buildBuilding(px, pz, w,d,h, buildingColors[bi++%buildingColors.length]));
   }
 }
 
@@ -695,8 +716,9 @@ function makeEnemy(x,z){
   wrapper.position.set(x,0,z);
   wrapper.rotation.y = Math.PI; // プレイヤー側を向かせておく
   scene.add(wrapper);
-  return { group:wrapper, visual, hp:MAX_HP, maxHp:MAX_HP, alive:true, downed:false, downTimer:0, respawnTimer:0, attackTimer:2.0+Math.random()*1.5,
-    downValue:0, moveCooldown:1.0+Math.random()*1.5, jumpVel:0, dodgeCd:0, wasKillDown:false };
+  return { group:wrapper, visual, hp:MAX_HP, maxHp:MAX_HP, alive:true, downed:false, downTimer:0, respawnTimer:0,
+    downValue:0, jumpVel:0, wasKillDown:false,
+    dashDir:new THREE.Vector3(0,0,1), dashTimer:0, mainFireTimer:0.3+Math.random()*0.3 };
 }
 const enemies = [ makeEnemy(8,-6), makeEnemy(-10,-16) ];
 let dummy = enemies[0]; // 常にロック中の敵を指す（毎フレーム更新される）
@@ -897,6 +919,9 @@ const state = {
   csMeleeActive: false, csMeleeTimeLeft: 0, // 格闘CS
   fullCrossHP: IS_X1FC ? 120 : 0,           // フルクロスのマント(ビーム防御120、一出撃1回・リロードなし)
   fullCrossBroken: false,
+  // ---- 勝敗管理 ----
+  gameOver: false,       // true = コスト0で決着済み（以後は入力・AIともに凍結）
+  gameOverTime: 0,       // 決着からの経過秒数（最大30秒で自動リスタート）
 };
 
 const weapons = IS_X1FC ? {
@@ -949,6 +974,21 @@ function playSfx(name){
   const inst = src.cloneNode(); // 連打しても前の再生を止めずに重ねて鳴らせるようにする
   inst.volume = 0.7;
   inst.play().catch(()=>{});
+}
+
+// ---------------------------------------------------------------------------
+// 5c. BGM（勝敗ジングル。musicフォルダにまとめて配置）
+// ---------------------------------------------------------------------------
+const MUSIC = {
+  defeat: new Audio('music/defeat.mp3'),
+  win: new Audio('music/win.mp3'),
+};
+function playMusic(name){
+  const src = MUSIC[name];
+  if (!src) return;
+  src.currentTime = 0;
+  src.volume = 0.85;
+  src.play().catch(()=>{});
 }
 
 // ---------------------------------------------------------------------------
@@ -1523,97 +1563,37 @@ function damagePlayer(dmg, fromPos){
   }
 }
 
-// 敵(訓練用ダミー機)のAI：弾速のある実弾で複数の武装を使い分け、ダッシュ・ジャンプ・回避行動も行う
+// 敵(訓練用ダミー機)のAI：瞬間移動はせず、ランダムな方向へ実際に移動するダッシュ／ダッシュ+ジャンプを
+// 繰り返しながら、常にメイン射撃を撃ち続ける
+const ENEMY_DASH_SPEED = 9.5;
 function updateEnemyAI(dt){
   if (!state.controlsEnabled) return;
   enemies.forEach(e=>{
     if (!e.alive) return;
     if (e.downed){
       e.jumpVel = 0;
+      e.dashTimer = 0;
       return;
     }
 
-    // ---- 攻撃：複数の武装をランダムに使い分ける ----
-    e.attackTimer -= dt;
-    if (e.attackTimer<=0){
-      e.attackTimer = 2.2 + Math.random()*1.6;
-      const from = e.group.position.clone().add(new THREE.Vector3(0,1.3,0));
-      const to = state.pos.clone().add(new THREE.Vector3(0,1.1,0));
-      const dist = from.distanceTo(to);
-      if (dist < 55){
-        const dir = new THREE.Vector3().subVectors(to, from);
-        const roll = Math.random();
-        if (roll<0.5){
-          // メイン射撃相当：素早い単発
-          spawnProjectile(from, dir, PROJECTILE_SPEED_ENEMY*1.15, 28, 1, 'enemy', 0xff5a3c);
-        } else if (roll<0.8){
-          // サブ射撃相当：やや低速・高威力
-          spawnProjectile(from, dir, PROJECTILE_SPEED_ENEMY*0.75, 46, 2, 'enemy', 0xffa85a);
-        } else {
-          // 特殊射撃相当：3連射
-          for (let i=0;i<3;i++){
-            setTimeout(()=>{
-              if (!e.alive || e.downed) return;
-              const f2 = e.group.position.clone().add(new THREE.Vector3(0,1.3,0));
-              const t2 = state.pos.clone().add(new THREE.Vector3(0,1.1,0));
-              const d2 = new THREE.Vector3().subVectors(t2,f2);
-              spawnProjectile(f2, d2, PROJECTILE_SPEED_ENEMY*1.1, 15, 0.6, 'enemy', 0xc9a0ff);
-            }, i*180);
-          }
-        }
-      }
-    }
-
-    // ---- 被弾回避：プレイヤーの弾が接近してきたら横にダッシュして避ける ----
-    e.dodgeCd = Math.max(0, (e.dodgeCd||0) - dt);
-    if (e.dodgeCd<=0){
-      for (const p of projectiles){
-        if (p.owner!=='player') continue;
-        const toE = new THREE.Vector3().subVectors(e.group.position, p.pos);
-        const dist = toE.length();
-        if (dist<12 && dist>0.01){
-          const closing = p.dir.dot(toE.clone().normalize());
-          if (closing>0.7){
-            const yaw = e.group.rotation.y;
-            const lateral = new THREE.Vector3(Math.sin(yaw+Math.PI/2),0,Math.cos(yaw+Math.PI/2));
-            const sign = Math.random()<0.5 ? 1 : -1;
-            const next = e.group.position.clone().addScaledVector(lateral, sign*5);
-            e.group.position.copy(clampToStage(next));
-            spawnBlinkTrail(e.group.position.clone());
-            e.dodgeCd = 1.1;
-            e.moveCooldown = Math.max(e.moveCooldown||0, 1.2);
-            break;
-          }
-        }
-      }
-    }
-
-    // ---- 移動AI：一定間隔でダッシュ／ジャンプ／小刻みな位置調整を行う ----
-    e.moveCooldown = (e.moveCooldown||0) - dt;
-    if (e.moveCooldown<=0){
-      e.moveCooldown = 1.3 + Math.random()*1.7;
-      const yaw = e.group.rotation.y;
-      const action = Math.random();
-      if (action<0.4){
-        // ダッシュ回避行動（横方向）
-        const lateral = new THREE.Vector3(Math.sin(yaw+Math.PI/2),0,Math.cos(yaw+Math.PI/2));
-        const sign = Math.random()<0.5 ? 1 : -1;
-        const next = e.group.position.clone().addScaledVector(lateral, sign*4.5);
-        e.group.position.copy(clampToStage(next));
-        spawnBlinkTrail(e.group.position.clone());
-      } else if (action<0.65 && e.jumpVel===0 && e.group.position.y<=0.001){
-        // ジャンプ
+    // ---- 移動：一定間隔でランダムな方向を選び直し、その方向へダッシュで実際に移動し続ける ----
+    //     （以前は position.copy() で瞬間移動していたが、毎フレーム少しずつ進める通常の移動に変更）
+    e.dashTimer -= dt;
+    if (e.dashTimer<=0){
+      e.dashTimer = 0.9 + Math.random()*1.0;
+      const ang = Math.random()*Math.PI*2;
+      e.dashDir = new THREE.Vector3(Math.sin(ang), 0, Math.cos(ang));
+      // ダッシュ開始のタイミングで、地上にいれば一定確率でダッシュしながらジャンプする
+      if (e.jumpVel===0 && e.group.position.y<=0.001 && Math.random()<0.5){
         e.jumpVel = 6.5;
-      } else {
-        // 前後への軽いステップ（距離調整）
-        const fwd = new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw));
-        const sign = Math.random()<0.5 ? 1 : -1;
-        const next = e.group.position.clone().addScaledVector(fwd, sign*2.6);
-        e.group.position.copy(clampToStage(next));
       }
     }
+    const next = e.group.position.clone().addScaledVector(e.dashDir, ENEMY_DASH_SPEED*dt);
+    resolveBuildingCollisions(next);
+    e.group.position.copy(clampToStage(next));
+    if (Math.random()<0.3) spawnBlinkTrail(e.group.position.clone()); // ダッシュの軌跡演出
 
-    // ---- ジャンプの簡易物理 ----
+    // ---- ジャンプの簡易物理（ダッシュ移動とは独立して同時進行＝「ダッシュしながらジャンプ」） ----
     if (e.jumpVel!==0 || e.group.position.y>0){
       e.group.position.y += e.jumpVel*dt;
       e.jumpVel -= 14*dt;
@@ -1623,6 +1603,19 @@ function updateEnemyAI(dt){
     // ---- 常にプレイヤーの方を向く ----
     const toPlayer = new THREE.Vector3().subVectors(state.pos, e.group.position);
     e.group.rotation.y = Math.atan2(toPlayer.x, toPlayer.z) + Math.PI;
+
+    // ---- 攻撃：メイン射撃をずっと撃ち続ける ----
+    e.mainFireTimer -= dt;
+    if (e.mainFireTimer<=0){
+      e.mainFireTimer = 0.32;
+      const from = e.group.position.clone().add(new THREE.Vector3(0,1.3,0));
+      const to = state.pos.clone().add(new THREE.Vector3(0,1.1,0));
+      const dist = from.distanceTo(to);
+      if (dist < 55){
+        const dir = new THREE.Vector3().subVectors(to, from);
+        spawnProjectile(from, dir, PROJECTILE_SPEED_ENEMY*1.15, 28, 1, 'enemy', 0xff5a3c);
+      }
+    }
   });
 }
 
@@ -1755,7 +1748,7 @@ function updateMovement(dt){
   const wasGrounded = state.pos.y<=0.001;
   if (keys[' '] && state.boost>0 && canAct && !guardingNow){
     if (wasGrounded && !state.ascending) playSfx('jump'); // 地上から上昇し始めた瞬間だけ再生
-    state.pos.y = Math.min(30, state.pos.y + 9*dt);
+    state.pos.y = Math.min(30, state.pos.y + 9.6*dt); // 上昇速度をほんの少し引き上げ（従来9→9.6）
     state.boost = Math.max(0, state.boost - dt*17*BOOST_DRAIN_MULT);
     state.ascending = true;
     state.wasAirborne = true;
@@ -1971,6 +1964,40 @@ function updateBoostExUI(){
     document.getElementById('exBurstBox').classList.toggle('full', state.awaken>=200 && !state.bursting);
   }
 }
+// ---------------------------------------------------------------------------
+// 10b. GAME OVER（自陣営コスト0＝敗北／敵陣営コスト0＝勝利）
+// ---------------------------------------------------------------------------
+function triggerGameOver(result){
+  if (state.gameOver) return;
+  state.gameOver = true;
+  state.gameOverTime = 0;
+  state.controlsEnabled = false; // プレイヤー操作・敵AIともに凍結
+  const titleEl = document.getElementById('gameOverTitle');
+  if (result==='win'){
+    titleEl.textContent = 'WIN';
+    titleEl.style.color = '#8ff0ff';
+    playMusic('win');
+  } else {
+    titleEl.textContent = 'DEFEAT';
+    titleEl.style.color = '#ff5a3c';
+    playMusic('defeat');
+  }
+  document.getElementById('gameOverCountdown').textContent = '30s';
+  document.getElementById('gameOverScreen').style.display = 'flex';
+}
+function checkGameOver(){
+  if (state.gameOver) return;
+  if (state.costTeam<=0) triggerGameOver('defeat');
+  else if (state.costEnemy<=0) triggerGameOver('win');
+}
+function updateGameOverCountdown(dt){
+  state.gameOverTime += dt;
+  const remain = Math.max(0, 30 - state.gameOverTime);
+  document.getElementById('gameOverCountdown').textContent = Math.ceil(remain)+'s';
+  if (state.gameOverTime>=30) location.reload();
+}
+document.getElementById('gameOverScreen').addEventListener('click', ()=>{ location.reload(); });
+
 function updateTimerUI(dt){
   state.timeLeft = Math.max(0, state.timeLeft-dt);
   const whole = Math.floor(state.timeLeft);
@@ -1985,6 +2012,13 @@ const clock = new THREE.Clock();
 function animate(){
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, clock.getDelta());
+
+  if (state.gameOver){
+    // 決着後は入力・AI・当たり判定を止め、カウントダウンと描画だけ継続する
+    updateGameOverCountdown(dt);
+    renderer.render(scene, camera);
+    return;
+  }
 
   updateMovement(dt);
   updateVfx(dt);
@@ -2028,6 +2062,7 @@ function animate(){
   updateBoostExUI();
   updateHpUI();
   updateCostUI();
+  checkGameOver();
 
   renderer.render(scene, camera);
 }

@@ -290,6 +290,19 @@ import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 // ---------------------------------------------------------------------
+// 0. BGM（機体選択画面のBGM。musicフォルダにまとめて配置）
+// ---------------------------------------------------------------------
+const selectBgm = new Audio('music/mecha_select.mp3');
+selectBgm.loop = true;
+selectBgm.volume = 0.7;
+function startSelectBgm(){
+  selectBgm.play().catch(()=>{}); // ブラウザの自動再生制限で失敗した場合は最初のクリック/キー入力で再試行
+}
+startSelectBgm();
+window.addEventListener('pointerdown', startSelectBgm, { once:true });
+window.addEventListener('keydown', startSelectBgm, { once:true });
+
+// ---------------------------------------------------------------------
 // 1. THREE.JS SCENE SETUP
 // ---------------------------------------------------------------------
 const canvas = document.getElementById('canvas3d');
