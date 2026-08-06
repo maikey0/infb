@@ -986,7 +986,16 @@ window.addEventListener('keydown', e=>{
 window.addEventListener('keyup', e=>{
   const k = e.key.toLowerCase();
   keys[k] = false;
-  if (k==='j'){ state.mainHolding = false; if (!state.mainIrradiating) state.mainCharge = 0; }
+  if (k==='j'){
+    state.mainHolding = false;
+    if (!state.mainIrradiating){
+      if (state.mainCharge>=CHARGE_TIME){
+        // フルチャージ状態で長押しを離した瞬間に照射発動
+        state.mainIrradiating = true; state.mainIrradiateTime = IRRADIATE_DURATION; state.irradiateVfxTimer = 0;
+      }
+      state.mainCharge = 0;
+    }
+  }
   if (k==='u'){ state.meleeHolding = false; if (!state.meleeInvincible) state.meleeCharge = 0; }
 });
 
@@ -1786,11 +1795,12 @@ function updateMovement(dt){
     if (state.boost>=100) state.overheated = false;
   }
 
-  // メイン射撃 長押し＝2秒チャージ後に照射モード（照射VFXは間引いて負荷軽減）
+  // メイン射撃 長押し＝2秒チャージ、チャージ完了後に長押しを離すと照射モード発動（照射VFXは間引いて負荷軽減）
   if (state.mainHolding && !state.mainIrradiating){
+    const wasFull = state.mainCharge>=CHARGE_TIME;
     state.mainCharge = Math.min(CHARGE_TIME, state.mainCharge + dt);
-    if (state.mainCharge>=CHARGE_TIME){
-      state.mainIrradiating = true; state.mainIrradiateTime = IRRADIATE_DURATION; state.irradiateVfxTimer = 0;
+    if (!wasFull && state.mainCharge>=CHARGE_TIME){
+      showMsg('照射チャージ完了！(離すと発射)', '#8ff0ff');
     }
   }
   if (state.mainIrradiating){
