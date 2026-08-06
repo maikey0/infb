@@ -696,7 +696,7 @@ function makeEnemy(x,z){
   wrapper.rotation.y = Math.PI; // プレイヤー側を向かせておく
   scene.add(wrapper);
   return { group:wrapper, visual, hp:MAX_HP, maxHp:MAX_HP, alive:true, downed:false, downTimer:0, respawnTimer:0, attackTimer:2.0+Math.random()*1.5,
-    downValue:0, moveCooldown:1.0+Math.random()*1.5, jumpVel:0, dodgeCd:0 };
+    downValue:0, moveCooldown:1.0+Math.random()*1.5, jumpVel:0, dodgeCd:0, wasKillDown:false };
 }
 const enemies = [ makeEnemy(8,-6), makeEnemy(-10,-16) ];
 let dummy = enemies[0]; // 常にロック中の敵を指す（毎フレーム更新される）
@@ -822,12 +822,14 @@ function updateProjectiles(dt){
       spawnParticleBurst(p.pos.clone(), 0xcccccc, 5, 2);
       hit = true;
     } else if (p.owner==='player'){
-      const tgt = p.target;
-      if (tgt && tgt.alive && !tgt.downed){
-        const tp = tgt.group.position.clone().add(new THREE.Vector3(0,1,0));
+      // ロック中の敵(誘導対象)を優先しつつ、ロックしていない敵にも命中判定を行い、当たったらダメージを入れる
+      for (const e of enemies){
+        if (!e.alive || e.downed) continue;
+        const tp = e.group.position.clone().add(new THREE.Vector3(0,1,0));
         if (p.pos.distanceTo(tp) < p.hitRadius){
-          damageEnemy(tgt, p.damage, tp, p.downValue);
+          damageEnemy(e, p.damage, tp, p.downValue);
           hit = true;
+          break;
         }
       }
     } else {
@@ -932,6 +934,21 @@ if (IS_X1FC){
     <b>ガード</b> F　<b>射撃CS</b> R　<b>格闘CS</b> T<br>
     <span style="opacity:0.7">フルクロス：ビーム攻撃を耐久120ぶん完全無効化（1出撃1回・破損したら復活なし）</span>
   `;
+}
+
+// ---------------------------------------------------------------------------
+// 5b. SOUND EFFECTS（soundsフォルダにまとめて配置）
+// ---------------------------------------------------------------------------
+const SFX = {
+  boost: new Audio('sounds/boost.mp3'),
+  jump: new Audio('sounds/jump.mp3'),
+};
+function playSfx(name){
+  const src = SFX[name];
+  if (!src) return;
+  const inst = src.cloneNode(); // 連打しても前の再生を止めずに重ねて鳴らせるようにする
+  inst.volume = 0.7;
+  inst.play().catch(()=>{});
 }
 
 // ---------------------------------------------------------------------------
@@ -1048,9 +1065,9 @@ function doMainShotX1FC(){
   const w = weapons.main;
   if (w.fireCd>0 || w.ammo<=0) return;
   w.ammo--; w.fireCd = 0.22;
+  if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   const from = muzzlePoint();
   const targetPos = currentTargetPos(26);
-  if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   spawnParticleBurst(from, 0xffe14d, 4, 3);
   const dir = new THREE.Vector3().subVectors(targetPos, from);
   const tgt = (lockOnHoming() && dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) ? dummy : null;
@@ -1105,9 +1122,9 @@ function doSpecialShotX1FC(){
     w.ammo--; w.timer = w.reload;
     state.attackLock = 0.6;
     const spinSign = keys['a'] ? -1 : 1;
+    if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
     const from0 = muzzlePoint();
     const targetPos = currentTargetPos(28);
-    if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
     for (let i=0;i<9;i++){
       setTimeout(()=>{
         const ang = state.yaw + spinSign*i*0.18*(forward && !lateral ? 0 : 1); // 前特殊は回転方向が前になる＝進行方向のみ、横特殊は左右へ回転
@@ -1124,9 +1141,9 @@ function doSpecialShotX1FC(){
     const shots = Math.min(w.ammo, 9);
     w.ammo -= shots;
     state.attackLock = 0.7;
+    if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
     const from = muzzlePoint();
     const targetPos = currentTargetPos(26);
-    if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
     const spread = 0.5; // 扇状の開き角
     for (let i=0;i<shots;i++){
       const t = shots<=1 ? 0 : (i/(shots-1))-0.5;
@@ -1209,9 +1226,9 @@ function doMainShot(){
   if (weapons.main.fireCd>0 || weapons.main.ammo<=0) return;
   weapons.main.ammo--; weapons.main.fireCd = 0.18; // 連射間隔は従来通り最速
   if (weapons.main.timer<=0) weapons.main.timer = weapons.main.reload; // 弾数回復(1発3.0秒)は独立してカウント
+  if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   const from = muzzlePoint();
   const targetPos = currentTargetPos(26);
-  if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   spawnParticleBurst(from, 0x4fe0ff, 4, 3); // マズルフラッシュ
   const dir = new THREE.Vector3().subVectors(targetPos, from);
   const tgt = (lockOnHoming() && dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) ? dummy : null;
@@ -1219,9 +1236,9 @@ function doMainShot(){
 }
 function doMainShotIrradiate(dt, spawnVfx){
   // J長押し(2秒チャージ後)：GNパルチザン【照射】持続ビーム。太く、描画は間引いて負荷軽減
+  if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   const from = muzzlePoint();
   const targetPos = currentTargetPos(26);
-  if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   if (spawnVfx) spawnBeam(from, targetPos, 0x8ff0ff, 0.16, 0.85);
   if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26 && hasLineOfSight(from, dummy.group.position)) damageDummy(65*dt, targetPos, 0.5*dt);
 }
@@ -1230,10 +1247,10 @@ function doSubShot(){
   const w = weapons.sub;
   if (w.timer>0 || w.ammo<=0) return;
   w.ammo--; w.timer = w.reload;
-  const from = muzzlePoint();
   const shockwave = keys['w']||keys['a']||keys['s']||keys['d']; // レバー入れ(移動キー押下中)で衝撃波、Nで粒子弾射出
-  const targetPos = currentTargetPos(22);
   if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
+  const from = muzzlePoint();
+  const targetPos = currentTargetPos(22);
   if (shockwave){
     spawnShockwaveRing(state.pos.clone().add(new THREE.Vector3(0,0.1,0)), 0x8fd6ff, 6);
     if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<7) damageDummy(87, targetPos, 2); // ダウン値2
@@ -1249,6 +1266,7 @@ function doSpecialShot(){
   const w = weapons.special;
   if (w.timer>0 || w.ammo<=0) return;
   w.ammo--; w.timer = w.reload;
+  if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   ziEnd.visible = true;
   ziEnd.position.copy(state.pos).add(new THREE.Vector3(Math.sin(state.yaw+1)*2, 2, Math.cos(state.yaw+1)*2));
   const lateral = keys['a']||keys['d'];
@@ -1423,14 +1441,14 @@ function damageEnemy(e, dmg, hitPos, downValue=0){
   if (e===dummy) document.getElementById('dummyHpFill').style.width = (e.hp/e.maxHp*100)+'%';
   spawnParticleBurst(hitPos || e.group.position.clone(), 0xffcf5a, 8, 4);
   if (e.hp<=0){
-    // ダウン：撃墜。一定時間転倒し、攻撃不可(黄ロック)になったのち起き上がる
-    e.downed = true; e.downTimer = 3.5; e.downValue = 0;
+    // ダウン：撃墜。一定時間転倒し、攻撃不可(黄ロック)になったのち起き上がる（この場合のみ体力全回復＝再出撃扱い）
+    e.downed = true; e.downTimer = 3.5; e.downValue = 0; e.wasKillDown = true;
     e.group.rotation.x = -Math.PI/2;
     if (e===dummy) state.costEnemy = Math.max(0, state.costEnemy-2000);
     showMsg('DOWN!', '#ffe14d');
   } else if (e.downValue > DOWN_VALUE_THRESHOLD){
-    // ダウン値の蓄積によるよろけダウン(黄ロック)。撃墜ではないためコストは減らない
-    e.downed = true; e.downTimer = 2.2; e.downValue = 0;
+    // ダウン値の蓄積によるよろけダウン(黄ロック)。撃墜ではないためコストも体力も変化しない
+    e.downed = true; e.downTimer = 2.2; e.downValue = 0; e.wasKillDown = false;
     e.group.rotation.x = -Math.PI/2;
     showMsg('よろけダウン！', '#ffe14d');
   }
@@ -1613,6 +1631,7 @@ function stepDir(name){
 }
 function doDashBurst(){
   if (state.boost<10) return;
+  playSfx('boost');
   const dir = new THREE.Vector3(Math.sin(state.yaw),0,Math.cos(state.yaw));
   spawnBlinkTrail(state.pos);
   state.pos.addScaledVector(dir, 5.5); // 最初の一瞬だけ瞬間移動的にビュンと進む
@@ -1624,8 +1643,12 @@ function doStep(name){
   state.boost -= 15;
   const dir = stepDir(name);
   spawnBlinkTrail(state.pos);
-  state.pos.addScaledVector(dir, 6.5); // 距離延長
+  const before = state.pos.clone();
+  state.pos.addScaledVector(dir, 7.4); // 距離を少し延長
   spawnBlinkTrail(state.pos);
+  // ステップ移動分だけカメラも即座に同じだけ動かし、後から追従して視点が前に流れる違和感を防ぐ
+  const delta = new THREE.Vector3().subVectors(state.pos, before);
+  camera.position.add(delta);
 }
 function moveDirWorld(mx,mz,yaw){
   const worldX = mx*Math.cos(yaw) - mz*Math.sin(yaw);
@@ -1657,10 +1680,10 @@ function updateMovement(dt){
   syncLockedTarget();
   if (!state.controlsEnabled){
     // カウントダウン中はカメラだけ追従させ、機体は静止させる
-    const camDist0 = 9.5;
+    const camDist0 = 12.5;
     const camX0 = state.pos.x - Math.sin(state.camYaw)*camDist0;
     const camZ0 = state.pos.z - Math.cos(state.camYaw)*camDist0;
-    const camY0 = state.pos.y + 3.1;
+    const camY0 = state.pos.y + 5.2;
     camera.position.lerp(new THREE.Vector3(camX0,camY0,camZ0), 0.2);
     camera.lookAt(state.pos.clone().add(new THREE.Vector3(0,1.0,0)));
     if (playerVisual){ playerRoot.position.set(state.pos.x, state.pos.y + playerFootOffset, state.pos.z); playerRoot.rotation.y = state.yaw; }
@@ -1722,13 +1745,14 @@ function updateMovement(dt){
   // ジャンプ / 上昇：Boost を消費。離すと高速落下
   const wasGrounded = state.pos.y<=0.001;
   if (keys[' '] && state.boost>0 && canAct && !guardingNow){
+    if (wasGrounded && !state.ascending) playSfx('jump'); // 地上から上昇し始めた瞬間だけ再生
     state.pos.y = Math.min(30, state.pos.y + 9*dt);
     state.boost = Math.max(0, state.boost - dt*17*BOOST_DRAIN_MULT);
     state.ascending = true;
     state.wasAirborne = true;
     if (state.boost<=0) state.overheated = true;
-  } else if (dashing){
-    // ダッシュ中は空中でも高度を維持し、落下しない
+  } else if (dashing || state.mainIrradiating || guardingNow){
+    // ダッシュ中・照射中・ガード中は空中でも高度を維持し、落下しない
     state.ascending = false;
   } else {
     state.pos.y = Math.max(0, state.pos.y - 24*dt); // 高速落下
@@ -1815,11 +1839,11 @@ function updateMovement(dt){
 
   document.getElementById('guardFlash').style.opacity = state.guarding ? '1' : '0';
 
-  // カメラ：機体がやや下寄りに収まるよう距離と高さを調整（参照画像の赤枠位置）
-  const camDist = 9.5;
+  // カメラ：真横よりやや上から見下ろす角度に調整し、距離も少し遠ざける
+  const camDist = 12.5;
   const camX = state.pos.x - Math.sin(state.camYaw)*camDist;
   const camZ = state.pos.z - Math.cos(state.camYaw)*camDist;
-  const camY = state.pos.y + 3.1;
+  const camY = state.pos.y + 5.2;
   camera.position.lerp(new THREE.Vector3(camX,camY,camZ), 0.16);
   const lookAt = state.pos.clone().add(new THREE.Vector3(0,1.0,0));
   camera.lookAt(lookAt);
@@ -1980,7 +2004,9 @@ function animate(){
     if (e.downed){
       e.downTimer -= dt;
       if (e.downTimer<=0){
-        e.downed = false; e.hp = e.maxHp; e.downValue = 0; e.group.rotation.x = 0;
+        e.downed = false;
+        if (e.wasKillDown){ e.hp = e.maxHp; e.wasKillDown = false; } // 撃墜からの再出撃時のみ体力全回復。よろけダウンは体力そのまま
+        e.downValue = 0; e.group.rotation.x = 0;
       }
     }
   });
