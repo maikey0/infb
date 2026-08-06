@@ -191,6 +191,7 @@
   </div>
 </div>
 
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script type="importmap">
 { "imports": {
     "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
@@ -228,6 +229,120 @@ const LOCK_RED_RANGE = 48;    // これより近いと誘導ON(赤)　※以前�
 const LOCK_GREEN_RANGE = 90;  // これより遠いと誘導OFF(緑) ※赤〜緑の間も緑扱い
 const PROJECTILE_SPEED_MAIN = 30;   // メイン射撃の弾速（秒速）
 const PROJECTILE_SPEED_SUB = 26;    // サブ射撃の弾速
+
+// ---------------------------------------------------------------------------
+// 0b. MULTIPLAYER（フレンドと1v1・PeerJSによるP2P通信。GitHub Pagesのような
+//     静的ホスティング上でもサーバー不要で動作する。mecha_select.htmlで選んだ
+//     モード/合言葉をsessionStorage経由で受け取る）
+// ---------------------------------------------------------------------------
+const MP = {
+  enabled: false,
+  role: null,        // 'host' | 'guest'
+  roomId: null,
+  peer: null,
+  conn: null,
+  connected: false,
+  sendTimer: 0,
+  remote: { pos: new THREE.Vector3(0,0,-14), yaw: Math.PI },
+};
+(function initMP(){
+  try {
+    if (sessionStorage.getItem('mpMode') !== 'friend') return;
+    const role = sessionStorage.getItem('mpRole');
+    const roomId = sessionStorage.getItem('mpRoomId');
+    if (!role || !roomId) return; // 合言葉が無ければ通常のCPU戦にフォールバック
+    MP.enabled = true; MP.role = role; MP.roomId = roomId;
+  } catch(e){}
+})();
+function mpCreateOverlay(){
+  const ov = document.createElement('div');
+  ov.id = 'mpOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:50;background:rgba(0,8,16,0.94);'
+    + 'display:flex;flex-direction:column;align-items:center;justify-content:center;'
+    + 'color:#fff;font-family:inherit;letter-spacing:1px;gap:14px;text-align:center;';
+  ov.innerHTML = `
+    <div style="font-size:13px;color:#7fd8ff;letter-spacing:4px;">FRIEND BATTLE &mdash; 1 v 1</div>
+    <div id="mpStatusMain" style="font-size:22px;font-weight:700;">接続準備中...</div>
+    <div id="mpStatusSub" style="font-size:13px;color:#9fd8ff;"></div>
+    <div id="mpRoomCodeBox" style="display:none;font-size:40px;font-weight:800;letter-spacing:10px;color:#ffe97a;padding:10px 26px;border:1px solid rgba(255,233,122,0.6);"></div>
+    <button id="mpCancelBtn" style="margin-top:10px;pointer-events:auto;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.3);color:#fff;padding:8px 20px;font-size:12px;letter-spacing:2px;cursor:pointer;">機体選択に戻る</button>
+  `;
+  document.body.appendChild(ov);
+  document.getElementById('mpCancelBtn').addEventListener('click', ()=>{
+    try { sessionStorage.removeItem('mpMode'); } catch(e){}
+    window.location.href = 'mecha_select.html';
+  });
+  return ov;
+}
+function mpSetStatus(main, sub){
+  const a = document.getElementById('mpStatusMain'), b = document.getElementById('mpStatusSub');
+  if (a) a.textContent = main;
+  if (b) b.textContent = sub || '';
+}
+function mpHideOverlay(){
+  const ov = document.getElementById('mpOverlay');
+  if (ov) ov.remove();
+}
+function mpSend(msg){
+  if (MP.conn && MP.connected){ try { MP.conn.send(msg); } catch(e){} }
+}
+function mpBindConn(){
+  MP.conn.on('open', ()=>{
+    MP.connected = true;
+    mpSetStatus('接続完了！', 'まもなく開始します...');
+    setTimeout(()=>{ mpHideOverlay(); runStartCountdown(); }, 500);
+  });
+  MP.conn.on('data', mpHandleData);
+  MP.conn.on('close', ()=>{
+    MP.connected = false;
+    if (!state.gameOver) showMsg('相手との接続が切断されました', '#ff5a3c');
+  });
+  MP.conn.on('error', err=>console.error('[MP] conn error', err));
+}
+function mpConnect(){
+  mpCreateOverlay();
+  if (typeof Peer === 'undefined'){
+    mpSetStatus('通信ライブラリの読込に失敗しました', 'ネットワーク接続をご確認のうえ、やり直してください');
+    return;
+  }
+  if (MP.role === 'host'){
+    mpSetStatus('部屋を準備中...', '');
+    MP.peer = new Peer('gnd-'+MP.roomId);
+    MP.peer.on('open', ()=>{
+      const box = document.getElementById('mpRoomCodeBox');
+      box.style.display = 'block'; box.textContent = MP.roomId;
+      mpSetStatus('この合言葉を相手に伝えてください', '相手の入室を待っています…');
+    });
+    MP.peer.on('connection', conn=>{ MP.conn = conn; mpBindConn(); });
+    MP.peer.on('error', err=>{
+      console.error('[MP] peer error', err);
+      mpSetStatus('接続エラー', 'すでに同じ合言葉の部屋が使われている可能性があります。機体選択からやり直してください');
+    });
+  } else {
+    mpSetStatus('部屋に接続中...', '合言葉: '+MP.roomId);
+    MP.peer = new Peer();
+    MP.peer.on('open', ()=>{
+      const conn = MP.peer.connect('gnd-'+MP.roomId, { reliable:true });
+      MP.conn = conn; mpBindConn();
+    });
+    MP.peer.on('error', err=>{
+      console.error('[MP] peer error', err);
+      mpSetStatus('接続エラー', '合言葉をご確認のうえ、機体選択からやり直してください');
+    });
+  }
+}
+function mpHandleData(msg){
+  if (!msg || !msg.type) return;
+  if (msg.type==='state'){
+    const e = enemies[0];
+    if (!e) return;
+    MP.remote.pos.set(msg.p[0], msg.p[1], msg.p[2]);
+    MP.remote.yaw = msg.yaw;
+    e.hp = msg.hp; e.maxHp = msg.maxHp;
+  } else if (msg.type==='hit'){
+    damagePlayer(msg.dmg, new THREE.Vector3(msg.fromPos[0], msg.fromPos[1], msg.fromPos[2]));
+  }
+}
 const PROJECTILE_SPEED_ENEMY = 22;  // 敵の射撃弾速（プレイヤーが避けやすいよう低速に）
 const DOWN_VALUE_THRESHOLD = 5;     // これを超えるとよろけダウン(黄ロック)
 // ステージ境界は下記の STAGE_BOUNDARY(多角形)で定義
@@ -737,7 +852,8 @@ function makeEnemy(x,z){
     boost:MAX_BOOST, overheated:false,
     mainAmmo:7, mainMax:7, mainTimer:0, mainFireCd:0.3+Math.random()*0.3 };
 }
-const enemies = [ makeEnemy(8,-6), makeEnemy(-10,-16) ];
+const enemies = MP.enabled ? [ makeEnemy(0,-14) ] : [ makeEnemy(8,-6), makeEnemy(-10,-16) ];
+if (MP.enabled) enemies[0].isNetwork = true; // フレンド対戦：この敵枠は相手プレイヤーの分身（AI操作しない）
 let dummy = enemies[0]; // 常にロック中の敵を指す（毎フレーム更新される）
 
 // ---------------------------------------------------------------------------
@@ -1565,6 +1681,11 @@ function gainAwaken(v){ if (!state.bursting) state.awaken = Math.min(200, state.
 
 function damageEnemy(e, dmg, hitPos, downValue=0){
   if (!e.alive || e.downed) return;
+  if (MP.enabled && e.isNetwork){
+    // フレンド対戦：このクライアントはダメージの権限を持たないので、
+    // 相手側の本当のHPへ反映してもらうよう通知する（自分側の見た目は下でそのまま即時更新＝当たった感の先出し）
+    mpSend({ type:'hit', dmg, downValue, fromPos:[state.pos.x, state.pos.y, state.pos.z] });
+  }
   e.hp = Math.max(0, e.hp-dmg);
   gainAwaken(dmg/e.maxHp*100); // 与えたダメージ量に応じて覚醒ゲージ蓄積（全HP分与えると100%）
   e.downValue = (e.downValue||0) + downValue;
@@ -1653,6 +1774,7 @@ function updateEnemyAI(dt){
   if (!state.controlsEnabled) return;
   enemies.forEach(e=>{
     if (!e.alive) return;
+    if (e.isNetwork) return; // フレンド対戦：この枠は相手プレイヤー本人が操作するのでAIは動かさない
     if (e.downed){
       e.jumpVel = 0;
       e.dashTimer = 0;
@@ -1920,6 +2042,21 @@ function updateMovement(dt){
   // 敵の定期攻撃
   updateEnemyAI(dt);
 
+  if (MP.enabled){
+    // フレンド対戦：相手の見た目を受信済みの位置・向きへ滑らかに追従させ、
+    // 自分の状態(位置・向き・HP)を一定間隔で相手へ送信する
+    const e = enemies[0];
+    if (e && state.controlsEnabled){
+      e.group.position.lerp(MP.remote.pos, Math.min(1, dt*10));
+      e.group.rotation.y = MP.remote.yaw;
+    }
+    MP.sendTimer += dt;
+    if (MP.sendTimer >= 0.05){ // 約20Hz
+      MP.sendTimer = 0;
+      mpSend({ type:'state', p:[state.pos.x, state.pos.y, state.pos.z], yaw: state.yaw, hp: state.hp, maxHp: MAX_HP });
+    }
+  }
+
   if (playerVisual){
     playerRoot.position.set(state.pos.x, state.pos.y + playerFootOffset, state.pos.z);
     playerRoot.rotation.y = state.yaw;
@@ -2181,7 +2318,7 @@ function animate(){
   renderer.render(scene, camera);
 }
 
-window.addEventListener('load', ()=>{ setTimeout(()=>{ document.getElementById('loadingScreen').style.display='none'; runStartCountdown(); },400); });
+window.addEventListener('load', ()=>{ setTimeout(()=>{ document.getElementById('loadingScreen').style.display='none'; if (MP.enabled) mpConnect(); else runStartCountdown(); },400); });
 updateCostUI();
 animate();
 </script>

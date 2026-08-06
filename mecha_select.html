@@ -187,6 +187,46 @@
     50% { box-shadow:0 0 20px rgba(255,180,0,1); }
   }
 
+  /* ---------- friend 1v1 mode UI ---------- */
+  #friendModeBtn {
+    position:absolute; bottom:40px; right:230px;
+    background:linear-gradient(135deg, rgba(0,60,90,0.9), rgba(0,25,45,0.9));
+    border:1px solid rgba(120,220,255,0.7); color:#fff; font-weight:700;
+    padding:8px 18px; font-size:13px; letter-spacing:2px;
+    clip-path: polygon(10px 0,100% 0,100% 100%,0 100%,0 10px);
+    pointer-events:auto; cursor:pointer;
+  }
+  #friendModeBtn.active { background:linear-gradient(135deg, rgba(255,180,0,0.9), rgba(180,110,0,0.9)); color:#1a1200; }
+  #mpPanel {
+    position:absolute; bottom:78px; right:16px; width:340px;
+    background:linear-gradient(135deg, rgba(0,20,30,0.95), rgba(0,10,20,0.92));
+    border:1px solid rgba(120,220,255,0.6);
+    padding:14px 16px; pointer-events:auto; display:none;
+    clip-path: polygon(0 0, 100% 0, 100% 90%, 92% 100%, 0 100%);
+  }
+  #mpPanel .title { font-size:11px; letter-spacing:2px; color:#7fd8ff; margin-bottom:10px; }
+  #mpPanel .row { display:flex; gap:8px; margin-bottom:8px; }
+  #mpPanel button.choice {
+    flex:1; background:rgba(255,255,255,0.08); border:1px solid rgba(120,220,255,0.5);
+    color:#fff; padding:8px 4px; font-size:12px; letter-spacing:1px; cursor:pointer;
+  }
+  #mpPanel button.choice.selected { background:rgba(120,220,255,0.25); border-color:#7fd8ff; }
+  #mpPanel input[type=text] {
+    width:100%; background:rgba(0,0,0,0.5); border:1px solid rgba(120,220,255,0.5);
+    color:#ffe97a; font-size:20px; letter-spacing:6px; text-align:center; padding:6px 0;
+    text-transform:uppercase; margin-bottom:8px;
+  }
+  #mpPanel .goBtn {
+    width:100%; background:rgba(255,180,0,0.9); color:#1a1200; font-weight:800;
+    padding:7px 0; font-size:12px; letter-spacing:2px; cursor:pointer; border:none;
+  }
+  #mpPanel .roomCode {
+    font-size:30px; font-weight:800; letter-spacing:8px; color:#ffe97a;
+    text-align:center; padding:8px 0; margin-bottom:6px;
+  }
+  #mpPanel .desc { font-size:11px; color:#9fd8ff; line-height:1.5; margin-bottom:8px; }
+  #mpStatusLine { font-size:11px; color:#7fd8ff; margin-top:14px; text-align:right; letter-spacing:1px; }
+
   #hint {
     position:absolute; bottom:42px; left:50%; transform:translateX(-50%);
     font-size:12px; color:#dff; letter-spacing:1px; opacity:0.85;
@@ -257,6 +297,25 @@
   <div id="grid"></div>
 
   <div id="hint">◀ ▶ / A D キーで選択　Enter / クリックで決定（決定すると対戦画面へ移動します）</div>
+
+  <button id="friendModeBtn">👥 フレンドと1V1</button>
+  <div id="mpPanel">
+    <div class="title">FRIEND BATTLE SETUP</div>
+    <div class="row">
+      <button class="choice" id="mpChoiceHost">部屋を作る（ホスト）</button>
+      <button class="choice" id="mpChoiceGuest">合言葉で参加（ゲスト）</button>
+    </div>
+    <div id="mpHostArea" style="display:none;">
+      <div class="desc">下の合言葉を対戦相手に伝えてください。機体を選んでSTARTを押すと、対戦画面で相手の入室を待ちます。</div>
+      <div class="roomCode" id="mpHostCode">----</div>
+      <button class="goBtn" id="mpHostRegen" style="background:rgba(255,255,255,0.12);color:#fff;margin-bottom:8px;">合言葉を作り直す</button>
+    </div>
+    <div id="mpGuestArea" style="display:none;">
+      <div class="desc">対戦相手から伝えられた合言葉を入力してください。</div>
+      <input type="text" id="mpGuestInput" maxlength="6" placeholder="合言葉">
+    </div>
+    <div id="mpStatusLine"></div>
+  </div>
 
   <div id="bottomBar">
     <div class="left">
@@ -717,12 +776,111 @@ window.addEventListener('keydown', (e)=>{
 
 document.getElementById('searchModeBtn').addEventListener('click', confirmSelection);
 
+// ---------------------------------------------------------------------
+// 4b. FRIEND BATTLE (1v1) MODE SETUP
+//     実際の接続(WebRTC/PeerJS)はindex.html側で行う。ここではモードと
+//     合言葉(ルームID)を決めてsessionStorageに渡すだけ。
+// ---------------------------------------------------------------------
+let mpMode = 'cpu'; // 'cpu' | 'host' | 'guest'
+let mpRoomCode = '';
+
+function randomRoomCode(){
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 紛らわしい文字(0/O, 1/I等)を除外
+  let s = '';
+  for (let i=0;i<5;i++) s += chars[Math.floor(Math.random()*chars.length)];
+  return s;
+}
+
+const friendModeBtn = document.getElementById('friendModeBtn');
+const mpPanel = document.getElementById('mpPanel');
+const mpChoiceHost = document.getElementById('mpChoiceHost');
+const mpChoiceGuest = document.getElementById('mpChoiceGuest');
+const mpHostArea = document.getElementById('mpHostArea');
+const mpGuestArea = document.getElementById('mpGuestArea');
+const mpHostCode = document.getElementById('mpHostCode');
+const mpGuestInput = document.getElementById('mpGuestInput');
+const mpStatusLine = document.getElementById('mpStatusLine');
+
+friendModeBtn.addEventListener('click', ()=>{
+  const opening = mpPanel.style.display === 'none' || !mpPanel.style.display;
+  mpPanel.style.display = opening ? 'block' : 'none';
+  if (!opening){
+    // パネルを閉じたらCPU戦に戻す
+    mpMode = 'cpu';
+    friendModeBtn.classList.remove('active');
+    updateMpStatusLine();
+  }
+});
+
+mpChoiceHost.addEventListener('click', ()=>{
+  mpMode = 'host';
+  mpRoomCode = randomRoomCode();
+  mpHostCode.textContent = mpRoomCode;
+  mpHostArea.style.display = 'block';
+  mpGuestArea.style.display = 'none';
+  mpChoiceHost.classList.add('selected'); mpChoiceGuest.classList.remove('selected');
+  friendModeBtn.classList.add('active');
+  updateMpStatusLine();
+});
+mpChoiceGuest.addEventListener('click', ()=>{
+  mpMode = 'guest';
+  mpHostArea.style.display = 'none';
+  mpGuestArea.style.display = 'block';
+  mpChoiceGuest.classList.add('selected'); mpChoiceHost.classList.remove('selected');
+  friendModeBtn.classList.add('active');
+  updateMpStatusLine();
+  mpGuestInput.focus();
+});
+document.getElementById('mpHostRegen').addEventListener('click', ()=>{
+  mpRoomCode = randomRoomCode();
+  mpHostCode.textContent = mpRoomCode;
+});
+mpGuestInput.addEventListener('input', updateMpStatusLine);
+// 選択画面のA/D/矢印キー操作と衝突しないよう、入力欄内ではキーイベントを伝播させない
+mpGuestInput.addEventListener('keydown', (e)=> e.stopPropagation());
+
+function updateMpStatusLine(){
+  if (mpMode==='host'){
+    mpStatusLine.textContent = '合言葉「'+mpRoomCode+'」で出撃準備ができます';
+  } else if (mpMode==='guest'){
+    const v = mpGuestInput.value.trim();
+    mpStatusLine.textContent = v ? '合言葉「'+v.toUpperCase()+'」で参加します' : '合言葉を入力してください';
+  } else {
+    mpStatusLine.textContent = '';
+  }
+}
+
 function confirmSelection(){
   const u = UNITS[selectedIndex];
   if (u.locked) return;
   try { localStorage.setItem('selectedMech', u.id || 'transient'); } catch(e){}
+
+  try {
+    if (mpMode==='host'){
+      sessionStorage.setItem('mpMode','friend');
+      sessionStorage.setItem('mpRole','host');
+      sessionStorage.setItem('mpRoomId', mpRoomCode);
+    } else if (mpMode==='guest'){
+      const code = mpGuestInput.value.trim().toUpperCase();
+      if (!code){
+        mpStatusLine.textContent = '合言葉を入力してください';
+        mpStatusLine.style.color = '#ff8a6a';
+        return;
+      }
+      sessionStorage.setItem('mpMode','friend');
+      sessionStorage.setItem('mpRole','guest');
+      sessionStorage.setItem('mpRoomId', code);
+    } else {
+      sessionStorage.removeItem('mpMode');
+      sessionStorage.removeItem('mpRole');
+      sessionStorage.removeItem('mpRoomId');
+    }
+  } catch(e){}
+
   const btn = document.getElementById('searchModeBtn');
-  btn.textContent = `${u.name.replace('\n','')} 出撃準備中...`;
+  btn.textContent = mpMode==='cpu'
+    ? `${u.name.replace('\n','')} 出撃準備中...`
+    : `${u.name.replace('\n','')} 出撃準備中...（対戦画面で接続します）`;
   btn.style.pointerEvents = 'none';
   setTimeout(()=>{
     window.location.href = 'index.html';
