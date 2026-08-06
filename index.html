@@ -74,15 +74,24 @@
   #lockReticle::before { left:50%; top:-14px; width:2px; height:12px; margin-left:-1px; }
   #lockReticle::after { left:50%; bottom:-14px; width:2px; height:12px; margin-left:-1px; }
   #guardFlash { position:absolute; inset:0; background:radial-gradient(circle,rgba(120,220,255,0.18),transparent 70%); opacity:0; }
-  #clickToStart { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.55); font-size:20px; letter-spacing:3px; color:#dff; pointer-events:auto; cursor:pointer; text-align:center; }
   #stateMsg { position:absolute; top:40%; left:50%; transform:translate(-50%,-50%); font-size:32px; font-weight:800; letter-spacing:6px; color:#ffe97a; text-shadow:0 0 20px rgba(255,220,120,0.9); opacity:0; pointer-events:none; }
   #debugMsg { position:absolute; bottom:2px; left:2px; font-size:11px; color:#9f9; opacity:0.9; max-width:90%; background:rgba(0,0,0,0.4); padding:2px 6px; }
 
   /* ===== GAME OVER (勝敗決着オーバーレイ) ===== */
-  #gameOverScreen { position:absolute; inset:0; z-index:5; display:none; align-items:center; justify-content:center; flex-direction:column; gap:14px; background:rgba(0,0,0,0.72); pointer-events:auto; cursor:pointer; }
+  #gameOverScreen { position:absolute; inset:0; z-index:5; display:none; align-items:center; justify-content:center; flex-direction:column; gap:14px; background:rgba(0,0,0,0.72); pointer-events:auto; cursor:pointer; overflow:hidden; }
   #gameOverScreen .title { font-size:64px; font-weight:800; letter-spacing:10px; text-shadow:0 0 30px rgba(255,255,255,0.5); }
   #gameOverScreen .sub { font-size:14px; letter-spacing:2px; color:#bfe6ff; }
   #gameOverScreen .cd { font-size:12px; letter-spacing:2px; color:#8fa6bb; }
+
+  /* ---- カットイン演出 ---- */
+  #cutInBar { position:absolute; left:-120%; top:50%; width:160%; height:200px; transform:translateY(-50%) skewY(-4deg); background:linear-gradient(90deg, rgba(0,0,0,0) 0%, var(--cutin-color,#ff5a3c) 18%, var(--cutin-color,#ff5a3c) 82%, rgba(0,0,0,0) 100%); opacity:0; z-index:0; }
+  #cutInBar.play { animation: cutInSweep 1.0s cubic-bezier(.2,.85,.25,1) forwards; }
+  @keyframes cutInSweep { 0%{ left:-120%; opacity:0; } 12%{ opacity:0.92; } 55%{ left:-10%; opacity:0.92; } 100%{ left:-10%; opacity:0; } }
+  #cutInContent { position:relative; z-index:1; display:flex; flex-direction:column; align-items:center; gap:4px; opacity:0; transform:scale(0.65) translateX(160px); }
+  #cutInContent.play { animation: cutInPop 0.6s 0.28s cubic-bezier(.2,.9,.25,1.35) forwards; }
+  @keyframes cutInPop { 0%{ opacity:0; transform:scale(0.6) translateX(180px); } 60%{ opacity:1; transform:scale(1.1) translateX(-10px); } 100%{ opacity:1; transform:scale(1) translateX(0); } }
+  #cutInIcon { font-size:88px; line-height:1; filter:drop-shadow(0 0 18px rgba(255,255,255,0.6)); }
+  #cutInMech { font-size:13px; letter-spacing:3px; color:#dff4ff; text-shadow:0 0 8px rgba(0,0,0,0.9); }
   #loadingScreen { position:fixed; inset:0; background:#000; z-index:10; display:flex; align-items:center; justify-content:center; color:#7fd8ff; font-size:16px; letter-spacing:4px; flex-direction:column; gap:10px; }
 </style>
 </head>
@@ -115,7 +124,7 @@
     <b>ロック対象変更</b> C<br>
     <b>①メイン射撃</b> J (長押し=照射)<br>
     <b>②サブ射撃</b> K　<b>③特殊射撃</b> H<br>
-    <b>④特殊格闘</b> I　<b>⑤格闘</b> U (長押し=無敵)<br>
+    <b>④特殊格闘</b> I　<b>⑤格闘</b> U (長押し=無敵／W+U前格闘・A/D+U横格闘・S+U後格闘)<br>
     <b>ガード</b> F<br>
     <span style="opacity:0.7">覚醒中: Qでバースト・ランサー／S+QでG-ポータント呼出／Hでイッカク（各1回）</span>
   </div>
@@ -169,10 +178,14 @@
   <div id="guardFlash"></div>
   <div id="stateMsg"></div>
   <div id="debugMsg"></div>
-  <div id="clickToStart">クリックして開始</div>
 
   <div id="gameOverScreen">
-    <div class="title" id="gameOverTitle">WIN</div>
+    <div id="cutInBar"></div>
+    <div id="cutInContent">
+      <div id="cutInIcon">✈</div>
+      <div class="title" id="gameOverTitle">WIN</div>
+      <div id="cutInMech"></div>
+    </div>
     <div class="sub">クリックでリスタート</div>
     <div class="cd" id="gameOverCountdown">30s</div>
   </div>
@@ -202,6 +215,7 @@ const MECH_ID = (function(){
   try { return localStorage.getItem('selectedMech') || 'transient'; } catch(e){ return 'transient'; }
 })();
 const IS_X1FC = MECH_ID === 'x1fc'; // クロスボーン・ガンダムX1フルクロス
+const MECH_NAME = IS_X1FC ? 'クロスボーン・ガンダムX1フルクロス' : 'トランジェントガンダム';
 
 const MAX_HP = IS_X1FC ? 700 : 620;
 const MECH_COST = IS_X1FC ? 3000 : 2500;
@@ -718,7 +732,10 @@ function makeEnemy(x,z){
   scene.add(wrapper);
   return { group:wrapper, visual, hp:MAX_HP, maxHp:MAX_HP, alive:true, downed:false, downTimer:0, respawnTimer:0,
     downValue:0, jumpVel:0, wasKillDown:false,
-    dashDir:new THREE.Vector3(0,0,1), dashTimer:0, mainFireTimer:0.3+Math.random()*0.3 };
+    dashDir:new THREE.Vector3(0,0,1), dashTimer:0,
+    // ---- 自機と同じ「弾数・ブースト」制限をCPUにも課す ----
+    boost:MAX_BOOST, overheated:false,
+    mainAmmo:7, mainMax:7, mainTimer:0, mainFireCd:0.3+Math.random()*0.3 };
 }
 const enemies = [ makeEnemy(8,-6), makeEnemy(-10,-16) ];
 let dummy = enemies[0]; // 常にロック中の敵を指す（毎フレーム更新される）
@@ -1013,10 +1030,7 @@ function runStartCountdown(){
   }
   step();
 }
-document.getElementById('clickToStart').addEventListener('click', ()=>{
-  document.getElementById('clickToStart').style.display = 'none';
-  runStartCountdown();
-});
+// クリックしてスタート操作は廃止。ロード後は自動で3-2-1カウントダウンへ移行する
 
 window.addEventListener('keydown', e=>{
   const k = e.key.toLowerCase();
@@ -1281,7 +1295,7 @@ function doMainShot(){
   spawnParticleBurst(from, 0x4fe0ff, 4, 3); // マズルフラッシュ
   const dir = new THREE.Vector3().subVectors(targetPos, from);
   const tgt = (lockOnHoming() && dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26) ? dummy : null;
-  spawnProjectile(from, dir, PROJECTILE_SPEED_MAIN, 37, 1, 'player', 0x4fe0ff, tgt, 3.2); // ダウン値1／進行方向に沿った縦長のレンズ状
+  spawnProjectile(from, dir, PROJECTILE_SPEED_MAIN, 75, 2.0, 'player', 0x4fe0ff, tgt, 3.2); // 威力75／ダウン値2.0／補正-30%
 }
 function doMainShotIrradiate(dt, spawnVfx){
   // J長押し(2秒チャージ後)：GNパルチザン【照射】持続ビーム。太く、描画は間引いて負荷軽減
@@ -1296,18 +1310,28 @@ function doSubShot(){
   const w = weapons.sub;
   if (w.timer>0 || w.ammo<=0) return;
   w.ammo--; w.timer = w.reload;
-  const shockwave = keys['w']||keys['a']||keys['s']||keys['d']; // レバー入れ(移動キー押下中)で衝撃波、Nで粒子弾射出
+  const lever = keys['w']||keys['a']||keys['s']||keys['d']; // レバー入れ(移動キー押下中)＝横サブ、Nサブとで武装が変わる
   if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   const from = muzzlePoint();
   const targetPos = currentTargetPos(22);
-  if (shockwave){
+  if (lever){
+    // 横サブ射撃：衝撃波 威力90／ダウン値2.0／補正-20%
     spawnShockwaveRing(state.pos.clone().add(new THREE.Vector3(0,0.1,0)), 0x8fd6ff, 6);
-    if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<7) damageDummy(87, targetPos, 2); // ダウン値2
+    if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<7) damageDummy(90, targetPos, 2.0);
   } else {
+    // Nサブ射撃：レギルスビットを5発連射。1発ごとに 威力40／ダウン値0.8／補正-10%
     spawnParticleBurst(from, 0x8fd6ff, 10, 6);
-    const dir = new THREE.Vector3().subVectors(targetPos, from);
-    const tgt = (lockOnHoming() && dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<24) ? dummy : null;
-    spawnProjectile(from, dir, PROJECTILE_SPEED_SUB, 74, 2, 'player', 0x8fd6ff, tgt); // ダウン値2
+    for (let i=0;i<5;i++){
+      setTimeout(()=>{
+        if (!dummy.alive || dummy.downed) return;
+        const f2 = muzzlePoint();
+        const t2 = currentTargetPos(24);
+        spawnParticleBurst(f2, 0x8fd6ff, 4, 4);
+        const dir2 = new THREE.Vector3().subVectors(t2, f2);
+        const tgt2 = (lockOnHoming() && f2.distanceTo(dummy.group.position)<24) ? dummy : null;
+        spawnProjectile(f2, dir2, PROJECTILE_SPEED_SUB, 40, 0.8, 'player', 0x8fd6ff, tgt2);
+      }, i*110);
+    }
   }
 }
 
@@ -1344,17 +1368,24 @@ function doSpecialShot(){
       spawnShockwaveRing(dummy.group.position.clone(), 0xb489ff, 3);
       spawnParticleBurst(targetPos, 0xb489ff, 20, 3);
       if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20){
-        damageDummy(70, targetPos); // デッドエンドフィンガー【捕縛】
+        damageDummy(124, targetPos, 5.0); // 前特殊射撃：威力124／ダウン値5.0／補正-100%（デッドエンドフィンガー【捕縛】）
         if (dummy.alive){ dummy.downed = true; dummy.downTimer = 1.6; dummy.group.rotation.x = -Math.PI/2; } // 一定時間拘束
       }
     }, 350);
   } else {
+    // N特殊射撃：デッドエンドフィンガー【照射】。1回0.09秒間隔で6段ヒット（1発ごとに 威力14／ダウン値0.5／補正-1%）
     setTimeout(()=>{
       const from = ziEnd.position.clone();
-      const targetPos = currentTargetPos(20);
-      spawnBeam(from, targetPos, 0xb489ff, 0.25, 0.08);
-      spawnParticleBurst(from, 0xb489ff, 14, 5);
-      if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<20 && hasLineOfSight(from, dummy.group.position)) damageDummy(90, targetPos, 2); // デッドエンドフィンガー【照射】
+      spawnBeam(from, currentTargetPos(20), 0xb489ff, 0.5, 0.08);
+      for (let i=0;i<6;i++){
+        setTimeout(()=>{
+          if (!dummy.alive || dummy.downed) return;
+          const f2 = ziEnd.position.clone();
+          const targetPos2 = currentTargetPos(20);
+          spawnParticleBurst(targetPos2, 0xb489ff, 5, 4);
+          if (f2.distanceTo(dummy.group.position)<20 && hasLineOfSight(f2, dummy.group.position)) damageDummy(14, targetPos2, 0.5);
+        }, i*90);
+      }
     }, 350);
   }
   setTimeout(()=>{ ziEnd.visible = false; }, 900);
@@ -1386,6 +1417,15 @@ function doMelee(){
     const dir = new THREE.Vector3().subVectors(dummy.group.position, state.pos).normalize();
     state.pos.addScaledVector(dir, Math.min(3.2, distToDummy-2.2));
   }
+  const lateral = keys['a']||keys['d'];
+  const back = keys['s'] && !lateral;
+  const forward = keys['w'] && !lateral && !back;
+
+  if (lateral){ doSideMelee(); return; }
+  if (back){ doBackMelee(); return; }
+  if (forward){ doForwardMelee(); return; }
+
+  // N格闘：GNパルチザンによる3段斬り（レバー入力無し）
   state.comboStep = (state.comboStep % 3) + 1;
   state.attackLock = 0.32;
   if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<4){
@@ -1397,6 +1437,46 @@ function doMelee(){
   animatePunch(0.28, -1.6);
 }
 
+// 前格闘「百裂脚」：上方向への誘導が強い連続蹴りの多段格闘（wikiのフレーバーに準拠、5段ヒット）
+function doForwardMelee(){
+  state.comboStep = 0;
+  state.attackLock = 0.55;
+  animatePunch(0.5, -1.9);
+  for (let i=0;i<5;i++){
+    setTimeout(()=>{
+      if (!dummy.alive || dummy.downed) return;
+      if (state.pos.distanceTo(dummy.group.position)<4.5){
+        damageDummy(26, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 0.4);
+        spawnParticleBurst(dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 0xffe97a, 10, 5);
+      }
+    }, i*80);
+  }
+}
+
+// 横格闘：GNパルチザンを横薙ぎに一閃する単発の斬撃
+function doSideMelee(){
+  state.comboStep = 0;
+  state.attackLock = 0.45;
+  animatePunch(0.32, 1.8);
+  if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<4){
+    damageDummy(120, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 1.8);
+    spawnShockwaveRing(dummy.group.position.clone(), 0x9ad0ff, 3);
+    spawnParticleBurst(dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 0xffe97a, 16, 6);
+  }
+}
+
+// 後格闘：背後へ回り込みながら突き出す一閃（振り向きざまのカウンター気味の一撃）
+function doBackMelee(){
+  state.comboStep = 0;
+  state.attackLock = 0.45;
+  animatePunch(0.32, -2.2);
+  if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<4){
+    damageDummy(115, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 1.8);
+    spawnShockwaveRing(dummy.group.position.clone(), 0xffb46a, 3);
+    spawnParticleBurst(dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 0xffe97a, 16, 6);
+  }
+}
+
 function doSpecialMelee(){
   const w = weapons.smelee;
   if (w.timer>0 || w.ammo<=0) return;
@@ -1405,14 +1485,15 @@ function doSpecialMelee(){
   animatePunch(0.4, -2.0);
   setTimeout(()=>{
     spawnShockwaveRing(state.pos.clone(), 0xfff0a0, 8);
-    for (let i=0;i<6;i++){
+    // 特殊格闘：雷ドーム。8本の雷それぞれが多段ヒット（1本ごとに 威力15／ダウン値0.5／補正-10%）
+    for (let i=0;i<8;i++){
       setTimeout(()=>{
         const p = state.pos.clone().add(new THREE.Vector3((Math.random()-0.5)*14,0,(Math.random()-0.5)*14));
         const strikeEnd = p.clone(); strikeEnd.y = state.pos.y + 0.4; // 地面までは落とさず自機のやや下で止める
         spawnBeam(p.clone().add(new THREE.Vector3(0,8,0)), strikeEnd, 0xfff0a0, 0.12, 0.08);
+        if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<12) damageDummy(15, dummy.group.position.clone(), 0.5);
       }, i*70);
     }
-    if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<12) damageDummy(124, dummy.group.position.clone(), 3);
   }, 260);
 }
 
@@ -1493,7 +1574,7 @@ function damageEnemy(e, dmg, hitPos, downValue=0){
     // ダウン：撃墜。一定時間転倒し、攻撃不可(黄ロック)になったのち起き上がる（この場合のみ体力全回復＝再出撃扱い）
     e.downed = true; e.downTimer = 3.5; e.downValue = 0; e.wasKillDown = true;
     e.group.rotation.x = -Math.PI/2;
-    if (e===dummy) state.costEnemy = Math.max(0, state.costEnemy-2000);
+    state.costEnemy = Math.max(0, state.costEnemy-2000); // ロック中でなくても、どちらの敵を倒してもコストが減る
     showMsg('DOWN!', '#ffe14d');
   } else if (e.downValue > DOWN_VALUE_THRESHOLD){
     // ダウン値の蓄積によるよろけダウン(黄ロック)。撃墜ではないためコストも体力も変化しない
@@ -1564,8 +1645,10 @@ function damagePlayer(dmg, fromPos){
 }
 
 // 敵(訓練用ダミー機)のAI：瞬間移動はせず、ランダムな方向へ実際に移動するダッシュ／ダッシュ+ジャンプを
-// 繰り返しながら、常にメイン射撃を撃ち続ける
+// 繰り返しながら、常にメイン射撃を撃ち続ける。ブースト・弾数は自機と同じ制限（無制限にしない）
 const ENEMY_DASH_SPEED = 9.5;
+const ENEMY_JUMP_VEL = 9.0;     // ダッシュ+ジャンプの初速（従来6.5→もっと長く滞空するよう引き上げ）
+const ENEMY_GRAVITY = 9.5;      // 重力も弱め、滞空時間を延長（従来14）
 function updateEnemyAI(dt){
   if (!state.controlsEnabled) return;
   enemies.forEach(e=>{
@@ -1575,6 +1658,7 @@ function updateEnemyAI(dt){
       e.dashTimer = 0;
       return;
     }
+    const grounded = e.group.position.y<=0.001;
 
     // ---- 移動：一定間隔でランダムな方向を選び直し、その方向へダッシュで実際に移動し続ける ----
     //     （以前は position.copy() で瞬間移動していたが、毎フレーム少しずつ進める通常の移動に変更）
@@ -1583,35 +1667,52 @@ function updateEnemyAI(dt){
       e.dashTimer = 0.9 + Math.random()*1.0;
       const ang = Math.random()*Math.PI*2;
       e.dashDir = new THREE.Vector3(Math.sin(ang), 0, Math.cos(ang));
-      // ダッシュ開始のタイミングで、地上にいれば一定確率でダッシュしながらジャンプする
-      if (e.jumpVel===0 && e.group.position.y<=0.001 && Math.random()<0.5){
-        e.jumpVel = 6.5;
+      // ダッシュ開始のタイミングで、地上にいてブーストが残っていれば一定確率でダッシュしながらジャンプする
+      if (e.jumpVel===0 && grounded && e.boost>0 && Math.random()<0.5){
+        e.jumpVel = ENEMY_JUMP_VEL;
       }
     }
-    const next = e.group.position.clone().addScaledVector(e.dashDir, ENEMY_DASH_SPEED*dt);
-    resolveBuildingCollisions(next);
-    e.group.position.copy(clampToStage(next));
-    if (Math.random()<0.3) spawnBlinkTrail(e.group.position.clone()); // ダッシュの軌跡演出
+
+    // ---- ブースト消費：自機のブーストダッシュと同じ燃費（無制限にしない） ----
+    const canDash = e.boost>0;
+    if (canDash){
+      const next = e.group.position.clone().addScaledVector(e.dashDir, ENEMY_DASH_SPEED*dt);
+      resolveBuildingCollisions(next);
+      e.group.position.copy(clampToStage(next));
+      if (Math.random()<0.3) spawnBlinkTrail(e.group.position.clone()); // ダッシュの軌跡演出
+      e.boost = Math.max(0, e.boost - dt*30*BOOST_DRAIN_MULT);
+      if (e.boost<=0) e.overheated = true;
+    }
 
     // ---- ジャンプの簡易物理（ダッシュ移動とは独立して同時進行＝「ダッシュしながらジャンプ」） ----
     if (e.jumpVel!==0 || e.group.position.y>0){
+      if (e.jumpVel>0) e.boost = Math.max(0, e.boost - dt*17*BOOST_DRAIN_MULT); // 上昇中はブースト消費
       e.group.position.y += e.jumpVel*dt;
-      e.jumpVel -= 14*dt;
+      e.jumpVel -= ENEMY_GRAVITY*dt;
       if (e.group.position.y<=0){ e.group.position.y = 0; e.jumpVel = 0; }
+    }
+
+    // ---- ブースト回復：自機同様、接地中のみ緩やかに回復（オーバーヒート後は少し速く全回復） ----
+    if (e.boost<100 && grounded){
+      e.boost = Math.min(100, e.boost + dt*(e.overheated ? 100/0.7 : 16));
+      if (e.boost>=100){ e.boost=100; e.overheated=false; }
     }
 
     // ---- 常にプレイヤーの方を向く ----
     const toPlayer = new THREE.Vector3().subVectors(state.pos, e.group.position);
     e.group.rotation.y = Math.atan2(toPlayer.x, toPlayer.z) + Math.PI;
 
-    // ---- 攻撃：メイン射撃をずっと撃ち続ける ----
-    e.mainFireTimer -= dt;
-    if (e.mainFireTimer<=0){
-      e.mainFireTimer = 0.32;
+    // ---- 攻撃：メイン射撃をずっと撃ち続ける（自機と同じ7発マガジン・0.18秒間隔・3秒/発リロード） ----
+    if (e.mainFireCd>0) e.mainFireCd = Math.max(0, e.mainFireCd-dt);
+    if (e.mainTimer>0) e.mainTimer = Math.max(0, e.mainTimer-dt);
+    if (e.mainAmmo<e.mainMax && e.mainTimer<=0){ e.mainAmmo++; if (e.mainAmmo<e.mainMax) e.mainTimer = 3.0; }
+    if (e.mainFireCd<=0 && e.mainAmmo>0){
       const from = e.group.position.clone().add(new THREE.Vector3(0,1.3,0));
       const to = state.pos.clone().add(new THREE.Vector3(0,1.1,0));
       const dist = from.distanceTo(to);
       if (dist < 55){
+        e.mainAmmo--; e.mainFireCd = 0.18;
+        if (e.mainTimer<=0) e.mainTimer = 3.0;
         const dir = new THREE.Vector3().subVectors(to, from);
         spawnProjectile(from, dir, PROJECTILE_SPEED_ENEMY*1.15, 28, 1, 'enemy', 0xff5a3c);
       }
@@ -1973,17 +2074,30 @@ function triggerGameOver(result){
   state.gameOverTime = 0;
   state.controlsEnabled = false; // プレイヤー操作・敵AIともに凍結
   const titleEl = document.getElementById('gameOverTitle');
+  const screenEl = document.getElementById('gameOverScreen');
+  const barEl = document.getElementById('cutInBar');
+  const contentEl = document.getElementById('cutInContent');
+  const iconEl = document.getElementById('cutInIcon');
+  document.getElementById('cutInMech').textContent = MECH_NAME;
   if (result==='win'){
     titleEl.textContent = 'WIN';
     titleEl.style.color = '#8ff0ff';
+    screenEl.style.setProperty('--cutin-color', '#1878ff');
+    iconEl.textContent = '✈';
     playMusic('win');
   } else {
     titleEl.textContent = 'DEFEAT';
     titleEl.style.color = '#ff5a3c';
+    screenEl.style.setProperty('--cutin-color', '#8a1c1c');
+    iconEl.textContent = '💥';
     playMusic('defeat');
   }
   document.getElementById('gameOverCountdown').textContent = '30s';
-  document.getElementById('gameOverScreen').style.display = 'flex';
+  screenEl.style.display = 'flex';
+  // カットイン演出：毎回頭から再生されるようclassを一旦外してから付け直す
+  barEl.classList.remove('play'); contentEl.classList.remove('play');
+  void barEl.offsetWidth; // reflow強制でアニメーションを再トリガー
+  barEl.classList.add('play'); contentEl.classList.add('play');
 }
 function checkGameOver(){
   if (state.gameOver) return;
@@ -2067,7 +2181,7 @@ function animate(){
   renderer.render(scene, camera);
 }
 
-window.addEventListener('load', ()=>{ setTimeout(()=>{ document.getElementById('loadingScreen').style.display='none'; },400); });
+window.addEventListener('load', ()=>{ setTimeout(()=>{ document.getElementById('loadingScreen').style.display='none'; runStartCountdown(); },400); });
 updateCostUI();
 animate();
 </script>
