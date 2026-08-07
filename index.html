@@ -124,7 +124,7 @@
     <b>ロック対象変更</b> C<br>
     <b>①メイン射撃</b> J (長押し=照射)<br>
     <b>②サブ射撃</b> K　<b>③特殊射撃</b> H<br>
-    <b>④特殊格闘</b> I　<b>⑤格闘</b> U (長押して離す=格闘CS/無敵／W+U前格闘・A/D+U横格闘・S+U後格闘)<br>
+    <b>④特殊格闘</b> I　<b>⑤格闘</b> U (長押し=無敵／W+U前格闘・A/D+U横格闘・S+U後格闘)<br>
     <b>ガード</b> F<br>
     <span style="opacity:0.7">覚醒中: Qでバースト・ランサー／S+QでG-ポータント呼出／Hでイッカク（各1回）</span>
   </div>
@@ -153,7 +153,7 @@
     <div class="wSlot" id="wSlot_melee" style="background-image:url('images/wslot_4.png')">
       <div class="wNum" id="cnt_melee">100</div>
       <div class="wBar"><div class="wBarFill" id="bar_melee"></div></div>
-      <div class="wLabel">⑤格闘[U] 長押→離しで格闘CS(無敵)</div>
+      <div class="wLabel">⑤格闘[U] 長押=無敵</div>
     </div>
     <div class="wSlot" id="wSlot_csshot" style="background-image:url('images/wslot_1.png'); display:none;">
       <div class="wNum" id="cnt_csshot">1</div>
@@ -229,18 +229,6 @@ const LOCK_RED_RANGE = 48;    // これより近いと誘導ON(赤)　※以前�
 const LOCK_GREEN_RANGE = 90;  // これより遠いと誘導OFF(緑) ※赤〜緑の間も緑扱い
 const PROJECTILE_SPEED_MAIN = 30;   // メイン射撃の弾速（秒速）
 const PROJECTILE_SPEED_SUB = 26;    // サブ射撃の弾速
-
-// 着地硬直：ブースト半分(黄色ゲージ)までは残量を減らしてもほぼ変化なし、
-// そこから0(オーバーヒート)に近づくにつれ目に見えて伸びていく
-const LANDING_STUN_BASE = 0.15;   // ブースト半分以上残っている時の硬直
-const LANDING_STUN_MAX_EXTRA = 0.95; // オーバーヒート時に上乗せされる最大分
-const LANDING_STUN_YELLOW = 50;   // これを下回ると黄色ゾーン＝硬直が伸び始める境目
-function computeLandingStun(boostAtLanding, wasOverheated){
-  if (wasOverheated || boostAtLanding<=0) return LANDING_STUN_BASE + LANDING_STUN_MAX_EXTRA; // オバヒは常に最長
-  if (boostAtLanding>=LANDING_STUN_YELLOW) return LANDING_STUN_BASE; // 半分以上はほぼ変化なし
-  const ratio = 1 - (boostAtLanding/LANDING_STUN_YELLOW); // 黄色に入った瞬間0→残量0で1
-  return LANDING_STUN_BASE + LANDING_STUN_MAX_EXTRA * Math.pow(ratio, 1.7); // 終盤にかけて急激に伸びる
-}
 
 // ---------------------------------------------------------------------------
 // 0b. MULTIPLAYER（フレンドと1v1・PeerJSによるP2P通信。GitHub Pagesのような
@@ -351,8 +339,24 @@ function mpHandleData(msg){
     MP.remote.pos.set(msg.p[0], msg.p[1], msg.p[2]);
     MP.remote.yaw = msg.yaw;
     e.hp = msg.hp; e.maxHp = msg.maxHp;
+    e.cost = msg.cost; // 相手の実際の機体コストを反映（撃墜時のコスト減少を正しくする）
+    e.downed = !!msg.downed; // よろけダウンは相手側の本当の状態をそのまま採用する（見た目の予測とのズレを防ぐ）
+    e.group.rotation.x = e.downed ? -Math.PI/2 : 0;
   } else if (msg.type==='hit'){
-    damagePlayer(msg.dmg, new THREE.Vector3(msg.fromPos[0], msg.fromPos[1], msg.fromPos[2]));
+    damagePlayer(msg.dmg, new THREE.Vector3(msg.fromPos[0], msg.fromPos[1], msg.fromPos[2]), msg.downValue||0);
+  } else if (msg.type==='shot'){
+    // 見た目だけの弾を再現表示（判定なし。当たり判定は'hit'メッセージ側で権威的に処理する）
+    spawnProjectile(
+      new THREE.Vector3(msg.from[0], msg.from[1], msg.from[2]),
+      new THREE.Vector3(msg.dir[0], msg.dir[1], msg.dir[2]),
+      msg.speed, 0, 0, 'ghost', msg.color, null, msg.elongate||1
+    );
+  } else if (msg.type==='beam'){
+    spawnBeam(
+      new THREE.Vector3(msg.from[0], msg.from[1], msg.from[2]),
+      new THREE.Vector3(msg.to[0], msg.to[1], msg.to[2]),
+      msg.color, 0.16, msg.thickness||0.85
+    );
   }
 }
 const PROJECTILE_SPEED_ENEMY = 22;  // 敵の射撃弾速（プレイヤーが避けやすいよう低速に）
@@ -858,7 +862,7 @@ function makeEnemy(x,z){
   wrapper.rotation.y = Math.PI; // プレイヤー側を向かせておく
   scene.add(wrapper);
   return { group:wrapper, visual, hp:MAX_HP, maxHp:MAX_HP, alive:true, downed:false, downTimer:0, respawnTimer:0,
-    downValue:0, jumpVel:0, wasKillDown:false,
+    downValue:0, jumpVel:0, wasKillDown:false, cost:2000, isNetwork:false,
     dashDir:new THREE.Vector3(0,0,1), dashTimer:0,
     // ---- 自機と同じ「弾数・ブースト」制限をCPUにも課す ----
     boost:MAX_BOOST, overheated:false,
@@ -872,8 +876,6 @@ let dummy = enemies[0]; // 常にロック中の敵を指す（毎フレーム�
 // 4. VFX HELPERS
 // ---------------------------------------------------------------------------
 const vfxList = [];
-let lastPlayerDeathPos = null; // 自機撃墜時の位置（敗北カットインのカメラ寄せ用）
-let lastEnemyDeathPos = null;  // 敵機撃墜時の位置（勝利カットインのカメラ寄せ用）
 const projectiles = []; // 弾速を持つ実弾（プレイヤー/敵 共通）
 // ---- 高頻度に生成するVFX用の共有ジオメトリ（毎回newすると命中の度に負荷が積み重なりフリーズの原因になるため使い回す） ----
 const GEO_UNIT_SPHERE = new THREE.SphereGeometry(1,8,8); GEO_UNIT_SPHERE.__shared = true;
@@ -929,20 +931,6 @@ function spawnBlinkTrail(pos, size=0.5){
   scene.add(s);
   vfxList.push({ mesh:s, life:0.25, age:0, type:'fade' });
 }
-function spawnExplosion(pos, scale=1){
-  // 撃墜(自機/敵機どちらも)の際に使う大型爆発。見た目のみで、誰にもダメージは発生しない
-  spawnParticleBurst(pos, 0xffcf5a, Math.round(26*scale), 7*scale);
-  spawnParticleBurst(pos, 0xff5a3c, Math.round(18*scale), 5*scale);
-  spawnShockwaveRing(pos, 0xffb46a, 6*scale);
-  spawnShockwaveRing(pos, 0xff5a3c, 4.2*scale);
-  const core = new THREE.Mesh(GEO_UNIT_SPHERE, new THREE.MeshBasicMaterial({ color:0xffe14d, transparent:true, opacity:1 }));
-  core.position.copy(pos); core.scale.setScalar(0.2);
-  scene.add(core);
-  vfxList.push({ mesh:core, life:0.6, age:0, type:'explodeCore', maxR:2.6*scale });
-  const light = new THREE.PointLight(0xffb46a, 6*scale, 22*scale);
-  light.position.copy(pos); scene.add(light);
-  vfxList.push({ mesh:light, life:0.75, age:0, type:'fade' });
-}
 function updateVfx(dt){
   for (let i=vfxList.length-1;i>=0;i--){
     const v = vfxList[i]; v.age += dt;
@@ -961,16 +949,13 @@ function updateVfx(dt){
     } else if (v.type==='octaflash'){
       v.mesh.material.opacity = 0.95*(1-t);
       v.mesh.quaternion.copy(camera.quaternion);
-    } else if (v.type==='explodeCore'){
-      const r = v.maxR * Math.min(1, t*3.2); // 序盤で一気に膨張してから消える
-      v.mesh.scale.setScalar(0.2+r);
-      v.mesh.material.opacity = Math.max(0, 1-t*1.25);
     }
   }
 }
 
 function spawnProjectile(from, dir, speed, damage, downValue, owner, color=0x4fe0ff, target=null, elongate=1){
   // 弾速を持つ実弾。ownerが'player'なら敵(target)に、'enemy'ならプレイヤーに当たり判定する
+  // 'ghost'は見た目だけの弾（フレンド対戦で相手の発射を再現表示するための当たり判定なしの弾）
   // ※以前は弾ごとにPointLightを追加し、さらに毎回新規ジオメトリを作成していたため、
   //   連射すると描画負荷が急増してフリーズする原因になっていた。共有ジオメトリ＋発光マテリアルのみで表現する
   const nd = dir.clone().normalize();
@@ -980,6 +965,10 @@ function spawnProjectile(from, dir, speed, damage, downValue, owner, color=0x4fe
   mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), nd);
   scene.add(mesh);
   projectiles.push({ mesh, pos:from.clone(), dir:nd, speed, damage, downValue, owner, target, hitRadius:1.5, life:3.0, age:0 });
+  if (MP.enabled && owner==='player'){
+    // フレンド対戦：自分が撃った弾を相手にも見た目だけ再現してもらう（当たり判定は'hit'メッセージ側で別途権威的に行う）
+    mpSend({ type:'shot', from:[from.x,from.y,from.z], dir:[nd.x,nd.y,nd.z], speed, color, elongate });
+  }
 }
 function disposeVfxMesh(mesh){
   // シーンから外したメッシュのgeometry/materialを解放し、GPUメモリの蓄積によるフリーズを防ぐ
@@ -1004,7 +993,9 @@ function updateProjectiles(dt){
     p.pos.addScaledVector(p.dir, p.speed*dt);
     p.mesh.position.copy(p.pos);
     let hit = false;
-    if (projectileBlockedByBuilding(p.pos)){
+    if (p.owner==='ghost'){
+      // 見た目だけの弾（フレンド対戦で相手の発射を再現表示）：判定は一切行わず寿命が尽きたら消える
+    } else if (projectileBlockedByBuilding(p.pos)){
       // 建物の壁に着弾：貫通せず消滅させる
       spawnParticleBurst(p.pos.clone(), 0xcccccc, 5, 2);
       hit = true;
@@ -1022,7 +1013,7 @@ function updateProjectiles(dt){
     } else {
       const pp = state.pos.clone().add(new THREE.Vector3(0,1.1,0));
       if (p.pos.distanceTo(pp) < p.hitRadius){
-        damagePlayer(p.damage, p.pos);
+        damagePlayer(p.damage, p.pos, p.downValue);
         spawnParticleBurst(pp, 0xff5a3c, 6, 4);
         hit = true;
       }
@@ -1079,6 +1070,11 @@ const state = {
   meleeChargeUsed: false,
   irradiateVfxTimer: 0,
   enemyAttackTimer: 3.0,
+  thunderActive: false, // 特殊格闘「雷ドーム」発動中は落下しない
+  // ---- プレイヤー自身のよろけダウン(スタン)状態 ----
+  downed: false,
+  downValue: 0,
+  downTimer: 0,
   // ---- X1フルクロス専用 ----
   csShotActive: false, csShotTimeLeft: 0,   // 射撃CS
   csMeleeActive: false, csMeleeTimeLeft: 0, // 格闘CS
@@ -1087,7 +1083,6 @@ const state = {
   // ---- 勝敗管理 ----
   gameOver: false,       // true = コスト0で決着済み（以後は入力・AIともに凍結）
   gameOverTime: 0,       // 決着からの経過秒数（最大30秒で自動リスタート）
-  gameOverUIShown: false, // 撃墜ドアップ演出が終わり、勝敗UIが表示されたか
 };
 
 const weapons = IS_X1FC ? {
@@ -1199,15 +1194,7 @@ window.addEventListener('keyup', e=>{
       state.mainCharge = 0;
     }
   }
-  if (k==='u'){
-    state.meleeHolding = false;
-    if (!state.meleeInvincible && !state.meleeChargeUsed && state.meleeCharge>=CHARGE_TIME){
-      // フルチャージ状態で格闘ボタンを離した瞬間に格闘CS(無敵格闘)発動
-      state.meleeInvincible = true; state.meleeInvincibleTime = INVINCIBLE_DURATION; state.meleeChargeUsed = true;
-      showMsg('格闘CS発動！', '#ffb46a');
-    }
-    if (!state.meleeInvincible) state.meleeCharge = 0;
-  }
+  if (k==='u'){ state.meleeHolding = false; if (!state.meleeInvincible) state.meleeCharge = 0; }
 });
 
 function showMsg(text,color='#ffe97a'){
@@ -1222,6 +1209,7 @@ function showMsg(text,color='#ffe97a'){
 
 function handleAttackKeyDown(k){
   if (!state.controlsEnabled) return;
+  if (state.downed) return; // よろけダウン中は武装を一切使えない
   if (IS_X1FC) return handleAttackKeyDownX1FC(k);
   if (state.mainIrradiating && k!=='j') return; // 照射中は他の武装・移動系キーを封じる
   if (state.guarding && (k==='w'||k==='a'||k==='s'||k==='d'||k==='l'||k==='j'||k==='k'||k==='h'||k==='i'||k==='u'||k==='q')) return; // ガード中は移動と武装を封じる
@@ -1456,11 +1444,17 @@ function doMainShot(){
 }
 function doMainShotIrradiate(dt, spawnVfx){
   // J長押し(2秒チャージ後)：GNパルチザン【照射】持続ビーム。太く、描画は間引いて負荷軽減
+  // 距離無制限：ロックしている限り、どれだけ遠くても追従して当たる（壁の裏など視線が通らない場合のみ無効）
   if (state.locked && dummy.alive) facePlayerToward(dummy.group.position);
   const from = muzzlePoint();
-  const targetPos = currentTargetPos(26);
-  if (spawnVfx) spawnBeam(from, targetPos, 0x8ff0ff, 0.16, 0.85);
-  if (dummy.alive && !dummy.downed && from.distanceTo(dummy.group.position)<26 && hasLineOfSight(from, dummy.group.position)) damageDummy(65*dt, targetPos, 0.5*dt);
+  const targetPos = (state.locked && dummy.alive && !dummy.downed)
+    ? dummy.group.position.clone().add(new THREE.Vector3(0,1,0))
+    : currentTargetPos(2000);
+  if (spawnVfx){
+    spawnBeam(from, targetPos, 0x8ff0ff, 0.16, 0.85);
+    if (MP.enabled) mpSend({ type:'beam', from:[from.x,from.y,from.z], to:[targetPos.x,targetPos.y,targetPos.z], color:0x8ff0ff, thickness:0.85 });
+  }
+  if (dummy.alive && !dummy.downed && hasLineOfSight(from, dummy.group.position)) damageDummy(65*dt, targetPos, 0.5*dt);
 }
 
 function doSubShot(){
@@ -1594,35 +1588,20 @@ function doMelee(){
   animatePunch(0.28, -1.6);
 }
 
-// 前格闘「百裂キック」：百裂脚(15段)→蹴り上げ(締めの縦回転ダウン)。1入力で最後まで出し切る
+// 前格闘「百裂脚」：上方向への誘導が強い連続蹴りの多段格闘（wikiのフレーバーに準拠、5段ヒット）
 function doForwardMelee(){
   state.comboStep = 0;
-  state.attackLock = 0.9; // 1入力で最後まで出し切る(百裂キック)ため、他の入力を長めにロック
+  state.attackLock = 0.55;
   animatePunch(0.5, -1.9);
-  const KICK_HITS = 15, KICK_INTERVAL = 42; // 百裂脚：3ダメージ/ダウン値0.11を15連撃(累計45/1.65)
-  for (let i=0;i<KICK_HITS;i++){
+  for (let i=0;i<5;i++){
     setTimeout(()=>{
       if (!dummy.alive || dummy.downed) return;
       if (state.pos.distanceTo(dummy.group.position)<4.5){
-        damageDummy(3, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 0.11);
-        spawnParticleBurst(dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 0xffe97a, 4, 4);
+        damageDummy(26, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 0.4);
+        spawnParticleBurst(dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 0xffe97a, 10, 5);
       }
-    }, i*KICK_INTERVAL);
+    }, i*80);
   }
-  // 締めの「蹴り上げ」：縦回転ダウンを付与（合計威力130/ダウン値2.65相当）
-  setTimeout(()=>{
-    if (!dummy.alive || dummy.downed) return;
-    if (state.pos.distanceTo(dummy.group.position)<4.5){
-      damageDummy(85, dummy.group.position.clone().add(new THREE.Vector3(0,1,0)), 1.0);
-      spawnShockwaveRing(dummy.group.position.clone(), 0xffe97a, 3.4);
-      spawnParticleBurst(dummy.group.position.clone().add(new THREE.Vector3(0,1.2,0)), 0xffe97a, 18, 7);
-      if (dummy.alive && !dummy.downed){
-        // 縦回転ダウン：通常のよろけ蓄積とは別に、蹴り上げで強制的にダウンさせる
-        dummy.downed = true; dummy.downTimer = 2.6; dummy.downValue = 0;
-        dummy.group.rotation.x = -Math.PI/2;
-      }
-    }
-  }, KICK_HITS*KICK_INTERVAL + 120);
 }
 
 // 横格闘：GNパルチザンを横薙ぎに一閃する単発の斬撃
@@ -1654,6 +1633,7 @@ function doSpecialMelee(){
   if (w.timer>0 || w.ammo<=0) return;
   w.ammo--; w.timer = w.reload;
   state.attackLock = 0.5;
+  state.thunderActive = true; // 雷を発動している間は落下しないようにする
   animatePunch(0.4, -2.0);
   setTimeout(()=>{
     spawnShockwaveRing(state.pos.clone(), 0xfff0a0, 8);
@@ -1664,6 +1644,7 @@ function doSpecialMelee(){
         const strikeEnd = p.clone(); strikeEnd.y = state.pos.y + 0.4; // 地面までは落とさず自機のやや下で止める
         spawnBeam(p.clone().add(new THREE.Vector3(0,8,0)), strikeEnd, 0xfff0a0, 0.12, 0.08);
         if (dummy.alive && !dummy.downed && state.pos.distanceTo(dummy.group.position)<12) damageDummy(15, dummy.group.position.clone(), 0.5);
+        if (i===7) state.thunderActive = false; // 最後の一撃が終わったら解除
       }, i*70);
     }
   }, 260);
@@ -1751,9 +1732,7 @@ function damageEnemy(e, dmg, hitPos, downValue=0){
     // ダウン：撃墜。一定時間転倒し、攻撃不可(黄ロック)になったのち起き上がる（この場合のみ体力全回復＝再出撃扱い）
     e.downed = true; e.downTimer = 3.5; e.downValue = 0; e.wasKillDown = true;
     e.group.rotation.x = -Math.PI/2;
-    lastEnemyDeathPos = e.group.position.clone().add(new THREE.Vector3(0,1,0));
-    spawnExplosion(lastEnemyDeathPos.clone(), 1.1); // 撃墜時の爆発演出（見た目のみ）
-    state.costEnemy = Math.max(0, state.costEnemy-2000); // ロック中でなくても、どちらの敵を倒してもコストが減る
+    state.costEnemy = Math.max(0, state.costEnemy-(e.cost!=null ? e.cost : 2000)); // 相手の実際の機体コスト分だけ減らす（フレンド対戦での不公平を解消）
     showMsg('DOWN!', '#ffe14d');
   } else if (e.downValue > DOWN_VALUE_THRESHOLD){
     // ダウン値の蓄積によるよろけダウン(黄ロック)。撃墜ではないためコストも体力も変化しない
@@ -1783,7 +1762,7 @@ function syncLockedTarget(){
 // ---------------------------------------------------------------------------
 // プレイヤー被弾・撃墜（リスポーン時にコストを消費し、格闘チャージ使用済みフラグもリセット）
 // ---------------------------------------------------------------------------
-function damagePlayer(dmg, fromPos){
+function damagePlayer(dmg, fromPos, downValue=0){
   if (state.meleeInvincible) return; // 格闘無敵中は無効
   let actual = dmg;
   if (state.guarding && fromPos){
@@ -1813,15 +1792,24 @@ function damagePlayer(dmg, fromPos){
   }
   spawnParticleBurst(state.pos.clone().add(new THREE.Vector3(0,1.2,0)), 0xff5a3c, 10, 4);
   if (state.hp<=0){
-    lastPlayerDeathPos = state.pos.clone().add(new THREE.Vector3(0,1,0));
-    spawnExplosion(lastPlayerDeathPos.clone(), 1.1); // 自機撃墜時の爆発演出（相手にダメージは発生しない見た目のみ）
     state.costTeam = Math.max(0, state.costTeam-MECH_COST);
     showMsg('DOWN!', '#ff5a3c');
     state.hp = MAX_HP;
     state.meleeChargeUsed = false; // 生存中1回制限を撃墜でリセット
     state.pos.set(-4,0,4);
     state.awaken = 0; state.bursting = false;
+    state.downed = false; state.downValue = 0; state.downTimer = 0; // 撃墜復帰時はよろけダウンも解除
     // ※フルクロスのfullCrossHPはここでリセットしない（一出撃1回・コストオーバーでも復活しない仕様）
+    return;
+  }
+  // ダウン値の蓄積によるよろけダウン：動けなくなる（敵のダウンと同じ仕様をプレイヤーにも適用）
+  if (!state.downed){
+    state.downValue = (state.downValue||0) + downValue;
+    if (state.downValue > DOWN_VALUE_THRESHOLD){
+      state.downed = true; state.downTimer = 2.2; state.downValue = 0;
+      state.ascending = false;
+      showMsg('よろけダウン！', '#ff8a6a');
+    }
   }
 }
 
@@ -1915,7 +1903,7 @@ function stepDir(name){
   return f;
 }
 function doDashBurst(){
-  if (state.overheated || state.boost<10) return; // オーバーヒート中は特殊移動(ブーストダッシュ)不可
+  if (state.boost<10) return;
   playSfx('boost');
   const dir = new THREE.Vector3(Math.sin(state.yaw),0,Math.cos(state.yaw));
   spawnBlinkTrail(state.pos);
@@ -1924,7 +1912,7 @@ function doDashBurst(){
   state.boost = Math.max(0, state.boost-10*BOOST_DRAIN_MULT);
 }
 function doStep(name){
-  if (state.overheated || state.boost<15) return; // オーバーヒート中は特殊移動(ステップ)不可
+  if (state.boost<15) return;
   state.boost -= 15;
   const dir = stepDir(name);
   spawnBlinkTrail(state.pos);
@@ -1982,7 +1970,7 @@ function updateMovement(dt){
   if (keys['d']) mx -= 1;
   const moving = mx!==0 || mz!==0;
 
-  const canAct = state.landingStun<=0 && !state.mainIrradiating; // 照射中は移動・ダッシュ等も封じる
+  const canAct = state.landingStun<=0 && !state.mainIrradiating && !state.downed; // 照射中・よろけダウン中は移動・ダッシュ等も封じる
 
   // ガード中かどうかを先に確定させる（移動・攻撃の可否判定に使う）
   const guardingNow = !!keys['f'] && canAct && state.boost>0;
@@ -2036,12 +2024,8 @@ function updateMovement(dt){
     state.ascending = true;
     state.wasAirborne = true;
     if (state.boost<=0) state.overheated = true;
-  } else if (dashing || state.mainIrradiating || guardingNow){
+  } else if (dashing || state.mainIrradiating || guardingNow || state.thunderActive){
     // ダッシュ中・照射中・ガード中は空中でも高度を維持し、落下しない
-    // ただし地面すれすれの高さまで来ている場合は「接地している」ものとして扱う
-    // （そうしないと、着地寸前でダッシュし続けた際にブースト回復判定(pos.y<=0.001)へ一切到達できず、
-    //   実際には地面付近にいるのに空中にいる時と同じ回復量のまま止まってしまう）
-    if (state.pos.y>0 && state.pos.y<=0.06) state.pos.y = 0;
     state.ascending = false;
   } else {
     state.pos.y = Math.max(0, state.pos.y - 24*dt); // 高速落下
@@ -2051,7 +2035,7 @@ function updateMovement(dt){
   // 着地判定：空中にいたあと接地したら、着地硬直＋ブースト回復処理
   if (state.wasAirborne && state.pos.y<=0.001 && wasGrounded===false){
     state.wasAirborne = false;
-    state.landingStun = computeLandingStun(state.boost, state.overheated); // 着地硬直（ブースト残量で変化）
+    state.landingStun = 0.18; // 着地硬直
     state.boostRegenTimer = state.overheated ? 0.7 : 0.2;
   }
   if (state.pos.y>0.001) state.wasAirborne = true;
@@ -2091,12 +2075,11 @@ function updateMovement(dt){
     if (state.mainIrradiateTime<=0){ state.mainIrradiating = false; state.mainCharge = 0; }
   }
 
-  // 格闘 長押し＝2秒チャージ、フルチャージ状態でボタンを離すと格闘CS(無敵モード)発動（生存中1回のみ）
+  // 格闘 長押し＝2秒チャージ後に無敵モード（生存中1回のみ）
   if (state.meleeHolding && !state.meleeInvincible && !state.meleeChargeUsed){
-    const wasFullMelee = state.meleeCharge>=CHARGE_TIME;
     state.meleeCharge = Math.min(CHARGE_TIME, state.meleeCharge + dt);
-    if (!wasFullMelee && state.meleeCharge>=CHARGE_TIME){
-      showMsg('格闘CSチャージ完了！(離すと発動)', '#ffb46a');
+    if (state.meleeCharge>=CHARGE_TIME){
+      state.meleeInvincible = true; state.meleeInvincibleTime = INVINCIBLE_DURATION; state.meleeChargeUsed = true;
     }
   }
   if (state.meleeInvincible){
@@ -2109,22 +2092,25 @@ function updateMovement(dt){
 
   if (MP.enabled){
     // フレンド対戦：相手の見た目を受信済みの位置・向きへ滑らかに追従させ、
-    // 自分の状態(位置・向き・HP)を一定間隔で相手へ送信する
+    // 自分の状態(位置・向き・HP・よろけダウン状態)を一定間隔で相手へ送信する
     const e = enemies[0];
-    if (e && state.controlsEnabled){
+    if (e && state.controlsEnabled && !e.downed){
+      // よろけダウン中は相手の実際の位置が動かないはずなので、追従(lerp)自体を止めて表示を安定させる
       e.group.position.lerp(MP.remote.pos, Math.min(1, dt*10));
       e.group.rotation.y = MP.remote.yaw;
     }
     MP.sendTimer += dt;
     if (MP.sendTimer >= 0.05){ // 約20Hz
       MP.sendTimer = 0;
-      mpSend({ type:'state', p:[state.pos.x, state.pos.y, state.pos.z], yaw: state.yaw, hp: state.hp, maxHp: MAX_HP });
+      mpSend({ type:'state', p:[state.pos.x, state.pos.y, state.pos.z], yaw: state.yaw, hp: state.hp, maxHp: MAX_HP, cost: MECH_COST, downed: state.downed });
     }
   }
 
   if (playerVisual){
     playerRoot.position.set(state.pos.x, state.pos.y + playerFootOffset, state.pos.z);
     playerRoot.rotation.y = state.yaw;
+    const targetTiltX = state.downed ? -Math.PI/2 : 0;
+    playerRoot.rotation.x = THREE.MathUtils.lerp(playerRoot.rotation.x, targetTiltX, Math.min(1, dt*10));
     const bob = moving ? Math.sin(state.walkPhase)*0.04 : Math.sin(performance.now()*0.002)*0.025;
     playerRoot.position.y += bob;
 
@@ -2146,22 +2132,12 @@ function updateMovement(dt){
   document.getElementById('guardFlash').style.opacity = state.guarding ? '1' : '0';
 
   // カメラ：真横よりやや上から見下ろす角度に調整し、距離も少し遠ざける
-  // ロック対象が上空にいるときはカメラを持ち上げ、視線もロック対象寄りに補正して見失わないようにする
-  let camDist = 12.5;
-  let camY = state.pos.y + 5.2;
-  let lookAt = state.pos.clone().add(new THREE.Vector3(0,1.0,0));
-  if (state.locked && dummy.alive){
-    const heightDiff = dummy.group.position.y - state.pos.y;
-    if (heightDiff>0){
-      camY += heightDiff*0.6;               // 対象が高いほどカメラも持ち上げる
-      camDist += Math.min(10, heightDiff*0.35); // 見切れないよう少し引きで捉える
-    }
-    const targetLook = dummy.group.position.clone().add(new THREE.Vector3(0,1.0,0));
-    lookAt = lookAt.lerp(targetLook, 0.35); // 視線をロック対象寄りに補正
-  }
+  const camDist = 12.5;
   const camX = state.pos.x - Math.sin(state.camYaw)*camDist;
   const camZ = state.pos.z - Math.cos(state.camYaw)*camDist;
+  const camY = state.pos.y + 5.2;
   camera.position.lerp(new THREE.Vector3(camX,camY,camZ), 0.16);
+  const lookAt = state.pos.clone().add(new THREE.Vector3(0,1.0,0));
   camera.lookAt(lookAt);
 
   if (dummy.alive){
@@ -2280,33 +2256,11 @@ function updateBoostExUI(){
 // ---------------------------------------------------------------------------
 // 10b. GAME OVER（自陣営コスト0＝敗北／敵陣営コスト0＝勝利）
 // ---------------------------------------------------------------------------
-// ---- 撃墜されたほうの機体をカメラでドアップにする「死にカメラ」演出 ----
-const deathCam = { active:false, target:new THREE.Vector3(), t:0 };
-function updateDeathCam(dt){
-  if (!deathCam.active) return;
-  deathCam.t += dt;
-  const orbitAngle = state.camYaw + 0.6;
-  const dist = Math.max(2.4, 6.5 - deathCam.t*4.2); // 一気にグッと寄っていく
-  const cx = deathCam.target.x - Math.sin(orbitAngle)*dist;
-  const cz = deathCam.target.z - Math.cos(orbitAngle)*dist;
-  const cy = deathCam.target.y + 1.1;
-  camera.position.lerp(new THREE.Vector3(cx,cy,cz), Math.min(1, dt*4));
-  camera.lookAt(deathCam.target);
-}
-
-function triggerGameOver(result, focusPos){
+function triggerGameOver(result){
   if (state.gameOver) return;
   state.gameOver = true;
   state.gameOverTime = 0;
-  state.gameOverUIShown = false;
   state.controlsEnabled = false; // プレイヤー操作・敵AIともに凍結
-  // 負けた機体の爆発をカメラでドアップにしてから、勝敗UI＋音楽を出す
-  const pos = (focusPos || (result==='defeat' ? state.pos : (dummy && dummy.group.position)) || state.pos).clone();
-  if (pos.y<0.5) pos.y += 1.0;
-  deathCam.active = true; deathCam.t = 0; deathCam.target.copy(pos);
-  setTimeout(()=>finalizeGameOverUI(result), 1250);
-}
-function finalizeGameOverUI(result){
   const titleEl = document.getElementById('gameOverTitle');
   const screenEl = document.getElementById('gameOverScreen');
   const barEl = document.getElementById('cutInBar');
@@ -2332,16 +2286,13 @@ function finalizeGameOverUI(result){
   barEl.classList.remove('play'); contentEl.classList.remove('play');
   void barEl.offsetWidth; // reflow強制でアニメーションを再トリガー
   barEl.classList.add('play'); contentEl.classList.add('play');
-  state.gameOverTime = 0;
-  state.gameOverUIShown = true; // ここからカウントダウンを進める
 }
 function checkGameOver(){
   if (state.gameOver) return;
-  if (state.costTeam<=0) triggerGameOver('defeat', lastPlayerDeathPos);
-  else if (state.costEnemy<=0) triggerGameOver('win', lastEnemyDeathPos);
+  if (state.costTeam<=0) triggerGameOver('defeat');
+  else if (state.costEnemy<=0) triggerGameOver('win');
 }
 function updateGameOverCountdown(dt){
-  if (!state.gameOverUIShown) return; // ドアップ演出中はカウントダウンを進めない
   state.gameOverTime += dt;
   const remain = Math.max(0, 30 - state.gameOverTime);
   document.getElementById('gameOverCountdown').textContent = Math.ceil(remain)+'s';
@@ -2365,9 +2316,7 @@ function animate(){
   const dt = Math.min(0.05, clock.getDelta());
 
   if (state.gameOver){
-    // 決着後は入力・AI・当たり判定を止めるが、爆発の演出と「死にカメラ」のドアップだけは動かし続ける
-    updateVfx(dt);
-    updateDeathCam(dt);
+    // 決着後は入力・AI・当たり判定を止め、カウントダウンと描画だけ継続する
     updateGameOverCountdown(dt);
     renderer.render(scene, camera);
     return;
@@ -2398,6 +2347,7 @@ function animate(){
   }
 
   enemies.forEach(e=>{
+    if (e.isNetwork) return; // フレンド対戦：この枠のダウン復帰は相手側の実データに従う（ここでは操作しない）
     if (e.downed){
       e.downTimer -= dt;
       if (e.downTimer<=0){
@@ -2407,6 +2357,10 @@ function animate(){
       }
     }
   });
+  if (state.downed){
+    state.downTimer -= dt;
+    if (state.downTimer<=0){ state.downed = false; state.downValue = 0; state.downTimer = 0; }
+  }
   updateProjectiles(dt);
   document.getElementById('dummyHpFill').style.width = (dummy.hp/dummy.maxHp*100)+'%';
 
