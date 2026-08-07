@@ -707,19 +707,19 @@ window.addEventListener('resize', ()=>{
 //    of the reference screenshot, to be built out in future turns)
 // ---------------------------------------------------------------------
 const UNITS = [
-  { id:null, name:'エクストリームガンダム', cost:2500, mastery:'', icon:'⚔', locked:true },
-  { id:null, name:'N-EXTREMEガンダム\nエクスプロージョン', cost:2500, mastery:'', icon:'💥', locked:true },
-  { id:null, name:'N-EXTREMEガンダム\nヴィシス', cost:2500, mastery:'', icon:'🛡', locked:true },
-  { id:null, name:'N-EXTREMEガンダム\nスプレマシー', cost:1500, mastery:'', icon:'✦', locked:true },
-  { id:'transient', name:'トランジェントガンダム', cost:2500, mastery:'MASTER', icon:'✈', locked:false, stars:5 },
-  { id:'x1fc', name:'クロスボーン・ガンダム\nX1フルクロス', cost:3000, mastery:'', icon:'💀', locked:false, stars:1 },
-  { id:null, name:'マイティーストライク\nフリーダムガンダム', cost:3000, mastery:'', icon:'🕊', locked:true },
-  { id:null, name:'ガンダム', cost:2000, mastery:'', icon:'Ⓖ', locked:true },
-  { id:null, name:'ガンダム(重装)', cost:2500, mastery:'', icon:'🛡', locked:true },
-  { id:null, name:'ジオング', cost:2500, mastery:'', icon:'☠', locked:true },
-  { id:null, name:'シャア専用ゲルググ', cost:2000, mastery:'', icon:'⚡', locked:true },
-  { id:null, name:'シャア専用ザクII', cost:1500, mastery:'', icon:'⚡', locked:true },
-  { id:null, name:'ザクII', cost:1500, mastery:'', icon:'●', locked:true },
+  { id:null, name:'エクストリームガンダム', cost:2500, mastery:'', icon:'⚔', locked:true, pilot:'キジマ・ウィルフリッド' },
+  { id:null, name:'N-EXTREMEガンダム\nエクスプロージョン', cost:2500, mastery:'', icon:'💥', locked:true, pilot:'キジマ・ウィルフリッド' },
+  { id:null, name:'N-EXTREMEガンダム\nヴィシス', cost:2500, mastery:'', icon:'🛡', locked:true, pilot:'キジマ・ウィルフリッド' },
+  { id:null, name:'N-EXTREMEガンダム\nスプレマシー', cost:1500, mastery:'', icon:'✦', locked:true, pilot:'キジマ・ウィルフリッド' },
+  { id:'transient', name:'トランジェントガンダム', cost:2500, mastery:'MASTER', icon:'✈', locked:false, stars:5, pilot:'キジマ・ウィルフリッド' },
+  { id:'x1fc', name:'クロスボーン・ガンダム\nX1フルクロス', cost:3000, mastery:'', icon:'💀', locked:false, stars:1, pilot:'ルーカス・ネメシス' },
+  { id:null, name:'マイティーストライク\nフリーダムガンダム', cost:3000, mastery:'', icon:'🕊', locked:true, pilot:'キジマ・ウィルフリッド' },
+  { id:null, name:'ガンダム', cost:2000, mastery:'', icon:'Ⓖ', locked:true, pilot:'キジマ・ウィルフリッド' },
+  { id:null, name:'ガンダム(重装)', cost:2500, mastery:'', icon:'🛡', locked:true, pilot:'キジマ・ウィルフリッド' },
+  { id:null, name:'ジオング', cost:2500, mastery:'', icon:'☠', locked:true, pilot:'キジマ・ウィルフリッド' },
+  { id:null, name:'シャア専用ゲルググ', cost:2000, mastery:'', icon:'⚡', locked:true, pilot:'キジマ・ウィルフリッド' },
+  { id:null, name:'シャア専用ザクII', cost:1500, mastery:'', icon:'⚡', locked:true, pilot:'キジマ・ウィルフリッド' },
+  { id:null, name:'ザクII', cost:1500, mastery:'', icon:'●', locked:true, pilot:'キジマ・ウィルフリッド' },
 ];
 
 let selectedIndex = 4; // トランジェントガンダム
@@ -755,6 +755,7 @@ function updateInfoPanel(){
   document.querySelector('#unitInfo .costNum').textContent = u.cost;
   document.querySelector('#unitInfo .masteryVal').textContent = u.mastery || '-';
   document.querySelector('#unitInfo .nameBar').textContent = u.name.replace('\n','');
+  document.querySelector('#pilotTag .pname').textContent = u.pilot || 'キジマ・ウィルフリッド';
 }
 
 renderGrid();
